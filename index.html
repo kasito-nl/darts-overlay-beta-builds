@@ -1173,7 +1173,7 @@
                         <div class="tv-style-player flex items-center justify-between px-5 py-3 relative" style="${playerStyle}">
                             <div class="flex flex-col min-w-0">
                                 <span class="font-bold text-3xl truncate leading-tight tracking-tight outline-none" contenteditable="true" onblur="${targetWindow}updatePlayerName(1, this.innerText)">${gameState.p1Name}</span>
-                                ${config.showAverage ? `<div class="text-xs font-mono font-bold opacity-80 tracking-wider">AVG: ${p1Avg}</div>` : ''}
+                                ${config.showAverage ? `<div class="text-lg sm:text-xl font-mono font-extrabold tracking-wider mt-1 flex items-center gap-2">AVG: <span class="bg-black/10 px-2 py-0.5 rounded text-black font-black">${p1Avg}</span></div>` : ''}
                             </div>
                             ${p1Status}
                         </div>
@@ -1186,7 +1186,7 @@
                         <div class="tv-style-player flex items-center justify-between px-5 py-3 relative" style="${playerStyle}">
                             <div class="flex flex-col min-w-0">
                                 <span class="font-bold text-3xl truncate leading-tight tracking-tight outline-none" contenteditable="true" onblur="${targetWindow}updatePlayerName(2, this.innerText)">${gameState.p2Name}</span>
-                                ${config.showAverage ? `<div class="text-xs font-mono font-bold opacity-80 tracking-wider">AVG: ${p2Avg}</div>` : ''}
+                                ${config.showAverage ? `<div class="text-lg sm:text-xl font-mono font-extrabold tracking-wider mt-1 flex items-center gap-2">AVG: <span class="bg-black/10 px-2 py-0.5 rounded text-black font-black">${p2Avg}</span></div>` : ''}
                             </div>
                             ${p2Status}
                         </div>
@@ -1866,21 +1866,28 @@
                 gameState.p1Score = config.startingScore;
                 gameState.p2Score = config.startingScore;
 
-                if (isP1 && gameState.p1Legs >= config.legsPerSet) {
+                const setWonByP1 = isP1 && gameState.p1Legs >= config.legsPerSet;
+                const setWonByP2 = !isP1 && gameState.p2Legs >= config.legsPerSet;
+
+                if (setWonByP1) {
                     gameState.p1Sets++;
-                    gameState.p1Legs = 0;
-                    gameState.p2Legs = 0;
-                } else if (!isP1 && gameState.p2Legs >= config.legsPerSet) {
+                } else if (setWonByP2) {
                     gameState.p2Sets++;
-                    gameState.p1Legs = 0;
-                    gameState.p2Legs = 0;
                 }
 
                 if (gameState.p1Sets >= config.setsToWin) {
                     gameState.matchWinner = 1;
                 } else if (gameState.p2Sets >= config.setsToWin) {
                     gameState.matchWinner = 2;
-                } else {
+                }
+
+                // Reset legs for next set only if match is NOT won yet
+                if (!gameState.matchWinner && (setWonByP1 || setWonByP2)) {
+                    gameState.p1Legs = 0;
+                    gameState.p2Legs = 0;
+                }
+
+                if (!gameState.matchWinner) {
                     gameState.startingPlayer = gameState.startingPlayer === 1 ? 2 : 1;
                     gameState.currentPlayer = gameState.startingPlayer;
                 }
