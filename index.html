@@ -1,0 +1,1948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Darts Scoreboard Overlay & Remote Controller</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- SheetJS for Excel (.xlsx) Export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <!-- QRCode JS for instant remote mobile pairing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+    <!-- MQTT for Public Free Remote Sync (Replaces Firebase) -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+    <!-- Google Fonts (Inter & Roboto Mono) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-mono { font-family: 'Roboto Mono', monospace; }
+        
+        /* Dynamic indicator pulse color variable */
+        :root {
+            --indicator-color: 22, 163, 74;
+        }
+
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(var(--indicator-color), 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(var(--indicator-color), 0); }
+            100% { box-shadow: 0 0 0 0 rgba(var(--indicator-color), 0); }
+        }
+        .animate-pulse-ring {
+            animation: pulse-ring 2s infinite;
+        }
+
+        /* Clean scrollbars */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            height: 10px;
+            width: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #059669;
+            border-radius: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #10b981;
+        }
+        .custom-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: #059669 rgba(15, 23, 42, 0.8);
+        }
+
+        /* Editable inline elements */
+        [contenteditable="true"] {
+            outline: none;
+            cursor: text;
+            border-bottom: 1px solid transparent;
+            transition: all 0.2s;
+        }
+        [contenteditable="true"]:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            border-bottom-color: rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+        }
+        [contenteditable="true"]:focus {
+            background-color: rgba(0, 0, 0, 0.2);
+            border-bottom-color: #10b981;
+            border-radius: 4px;
+        }
+        
+        input[type="color"] {
+            -webkit-appearance: none;
+            border: none;
+            padding: 0;
+            background: none;
+            cursor: pointer;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch {
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="text-white min-h-screen transition-colors duration-500 pb-16" id="body-el" style="background-color: #00b140;">
+
+    <div id="app" class="flex flex-col min-h-screen">
+        
+        <!-- Reset Confirmation Modal -->
+        <div id="confirm-modal" class="fixed inset-0 z-[60] flex items-end justify-center pb-48 p-4 hidden opacity-0 transition-opacity duration-300">
+            <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform scale-95 transition-transform duration-300" id="confirm-panel">
+                <div class="flex items-center gap-3 mb-4 text-red-400">
+                    <div class="p-2 bg-red-900/30 rounded-lg">
+                        <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white">Reset Match?</h3>
+                </div>
+                <p class="text-slate-400 mb-6 text-sm">Current scores, averages, and throw history will be permanently lost. This cannot be undone.</p>
+                <div class="flex justify-end gap-2">
+                    <button id="btn-confirm-cancel" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 font-medium transition-colors text-sm">Cancel</button>
+                    <button id="btn-confirm-yes" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded font-medium transition-colors text-sm">Yes, Reset Match</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alert Notification Modal -->
+        <div id="alert-modal" class="fixed inset-0 z-[70] flex items-end justify-center pb-24 p-4 hidden opacity-0 transition-opacity duration-300">
+            <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform scale-95 transition-transform duration-300" id="alert-panel">
+                <div class="flex items-center gap-3 mb-2 text-amber-400">
+                    <i data-lucide="info" class="w-6 h-6"></i>
+                    <h3 class="text-lg font-bold text-white">Notice</h3>
+                </div>
+                <p id="alert-message" class="text-slate-300 mb-6 text-sm">Alert message here.</p>
+                <div class="flex justify-end">
+                    <button id="btn-alert-ok" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium transition-colors text-sm">OK</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Remote Score App Pairing Modal -->
+        <div id="remote-modal" class="fixed inset-0 z-[65] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 hidden opacity-0 transition-opacity duration-300">
+            <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl transform scale-95 transition-transform duration-300 flex flex-col items-center text-center" id="remote-panel">
+                <div class="w-12 h-12 bg-emerald-950 border border-emerald-500/40 rounded-full flex items-center justify-center text-emerald-400 mb-3 shadow-lg shadow-emerald-950/50">
+                    <i data-lucide="smartphone" class="w-6 h-6"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white">Connect Remote Score App</h3>
+                <p class="text-slate-400 text-xs mt-1 mb-4">Scan the QR code with your phone or enter the Room Code on another device to control scores remotely.</p>
+
+                <!-- Room Code Display -->
+                <div class="bg-slate-950 border border-slate-800 rounded-xl px-6 py-3 mb-4 w-full flex flex-col items-center">
+                    <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Active Room Code</span>
+                    <input type="text" id="modal-room-code" onchange="joinRoom(this.value)" onfocus="this.select()" class="text-3xl font-mono font-black text-emerald-400 tracking-wider my-1 bg-transparent text-center outline-none border-b-2 border-transparent focus:border-emerald-500 w-56 uppercase transition-colors" value="------">
+                    <button onclick="copyRoomLink()" class="text-xs text-slate-300 hover:text-white flex items-center gap-1 mt-1 transition-colors bg-slate-900 px-3 py-1 rounded-lg border border-slate-800">
+                        <i data-lucide="copy" class="w-3.5 h-3.5 text-emerald-400"></i> Copy Direct Remote Link
+                    </button>
+                </div>
+
+                <!-- Custom Host URL Input (for custom domains / GitHub pages base paths) -->
+                <div class="w-full mb-3 text-left">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Web Address Base URL</label>
+                        <span class="text-[9px] text-emerald-400 font-mono">GitHub Pages Ready</span>
+                    </div>
+                    <input type="text" id="custom-host-url" placeholder="e.g. https://yourusername.github.io/repo-name" oninput="updateRemoteQrCode()" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white font-mono outline-none focus:border-emerald-500">
+                    <div class="text-[10px] text-slate-400 mt-1 leading-tight">
+                        GitHub Pages works out of the box because it uses secure HTTPS and public WebSocket cloud syncing!
+                    </div>
+                </div>
+
+                <!-- QR Code Container -->
+                <div class="p-3 bg-white rounded-xl shadow-2xl mb-5 flex items-center justify-center border-4 border-emerald-500/30">
+                    <div id="qrcode"></div>
+                </div>
+
+                <div class="flex gap-2 w-full">
+                    <button id="btn-close-remote" onclick="toggleRemoteModal(false)" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold transition-colors text-xs uppercase tracking-wider">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 hidden opacity-0 transition-opacity duration-300">
+            <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-lg shadow-2xl overflow-y-auto max-h-[90vh] transform scale-95 transition-transform duration-300" id="settings-panel">
+                <div class="mt-8 flex justify-end gap-2">
+                    <button id="btn-close-settings" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 font-medium transition-colors">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Root -->
+        <main class="flex-grow p-4 md:p-6 lg:p-8 max-w-7xl mx-auto w-full flex flex-col gap-8" id="main-content">
+            <!-- Rendered by JS -->
+        </main>
+
+        <!-- Footer -->
+        <footer class="p-2 text-center text-[25px] font-mono text-white/25 select-none mt-8">
+            Made by Alex "Neon Noodle" Rutenfrans & Kasimier "Kasito" Kars
+        </footer>
+
+    </div>
+
+    <!-- JAVASCRIPT APPLICATION LOGIC -->
+    <script>
+        const CHECKOUTS = {
+            170: "T20 T20 BULL", 167: "T20 T19 BULL", 164: "T20 T18 BULL", 161: "T20 T17 BULL",
+            160: "T20 T20 D20", 158: "T20 T20 D19", 157: "T20 T19 D20", 156: "T20 T20 D18",
+            155: "T20 T19 D19", 154: "T20 T18 D20", 153: "T20 T19 D18", 152: "T20 T20 D16",
+            151: "T20 T17 D20", 150: "T20 T18 D18", 149: "T20 T19 D16", 148: "T20 T16 D20",
+            147: "T20 T17 D18", 146: "T20 T18 D16", 145: "T20 T15 D20", 144: "T20 T20 D12",
+            143: "T20 T17 D16", 142: "T20 T14 D20", 141: "T20 T19 D12", 140: "T20 T16 D16",
+            139: "T20 T13 D20", 138: "T20 T18 D12", 137: "T19 T16 D16", 136: "T20 T20 D8",
+            135: "T20 T17 D12", 134: "T20 T14 D16", 133: "T20 T19 D8", 132: "T20 T16 D12",
+            131: "T20 T13 D16", 130: "T20 T18 D8", 129: "T19 T16 D12", 128: "T18 T14 D16",
+            127: "T20 T17 D8", 126: "T19 T19 D16", 125: "BULL T17 D12", 124: "T20 T16 D8",
+            123: "T19 T16 D9", 122: "T18 T20 D4", 121: "T20 T15 D8", 120: "T20 20 D20",
+            119: "T19 T10 D16", 118: "T20 18 D20", 117: "T20 17 D20", 116: "T20 16 D20",
+            115: "T20 15 D20", 114: "T20 14 D20", 113: "T20 13 D20", 112: "T20 12 D20",
+            111: "T20 19 D16", 110: "T20 10 D20", 109: "T20 17 D16", 108: "T20 16 D16",
+            107: "T19 18 D16", 106: "T20 14 D16", 105: "T20 13 D16", 104: "T18 18 D16",
+            103: "T20 3 D20", 102: "T20 10 D16", 101: "T17 10 D20", 100: "T20 D20",
+            99: "T19 10 D16", 98: "T20 D19", 97: "T19 D20", 96: "T20 D18",
+            95: "T19 D19", 94: "T18 D20", 93: "T19 D18", 92: "T20 D16",
+            91: "T17 D20", 90: "T20 D15", 89: "T19 D16", 88: "T20 D14",
+            87: "T17 D18", 86: "T18 D16", 85: "T15 D20", 84: "T20 D12",
+            83: "T17 D16", 82: "T14 D20", 81: "T19 D12", 80: "T20 D10",
+            79: "T13 D20", 78: "T18 D12", 77: "T19 D10", 76: "T20 D8",
+            75: "T17 D12", 74: "T14 D16", 73: "T19 D8", 72: "T16 D12",
+            71: "T13 D16", 70: "T18 D8", 69: "T15 D12", 68: "T20 D4",
+            67: "T17 D8", 66: "T10 D18", 65: "T19 D4", 64: "T16 D8",
+            63: "T13 D12", 62: "T10 D16", 61: "T15 D8", 60: "20 D20",
+            59: "19 D20", 58: "18 D20", 57: "17 D20", 56: "16 D20",
+            55: "15 D20", 54: "14 D20", 53: "13 D20", 52: "12 D20",
+            51: "19 D16", 50: "10 D20", 49: "17 D16", 48: "16 D16",
+            47: "15 D16", 46: "6 D20", 45: "13 D16", 44: "4 D20",
+            43: "3 D20", 42: "6 D18", 41: "9 D16", 40: "D20",
+            39: "7 D16", 38: "D19", 37: "5 D16", 36: "D18",
+            35: "3 D16", 34: "D17", 33: "1 D16", 32: "D16",
+            31: "15 D8", 30: "D15", 29: "13 D8", 28: "D14",
+            27: "11 D8", 26: "D13", 25: "9 D8", 24: "D12",
+            23: "7 D8", 22: "D11", 21: "5 D8", 20: "D10",
+            19: "3 D8", 18: "D9", 17: "1 D8", 16: "D8",
+            15: "7 D4", 14: "D7", 13: "5 D4", 12: "D6",
+            11: "3 D4", 10: "D5", 9: "1 D4", 8: "D4",
+            7: "3 D2", 6: "D3", 5: "1 D2", 4: "D2",
+            3: "1 D1", 2: "D1",
+        };
+
+        let config = {
+            startingScore: 501,
+            legsPerSet: 3,
+            setsToWin: 2,
+            tvMode: true,
+            showCheckouts: true,
+            showAverage: true,
+            activeQuickTab: 'match',
+            bracketActiveTab: 'bracket',
+            chromaColor: '#00b140',
+            customHostUrl: localStorage.getItem('dartsCustomHost') || "",
+            matchTitle: "Click here to type a win condition",
+            footerText: "Click here to type the tournament name",
+            colors: {
+                headerBg: '#0f0f0f',
+                headerText: '#ffffff',
+                playerBg: '#e2e2e2',
+                playerText: '#000000',
+                scoreBg: '#d60000',
+                scoreText: '#ffffff',
+                indicator: '#16a34a'
+            }
+        };
+
+        let gameState = {
+            p1Name: "Player 1",
+            p2Name: "Player 2",
+            p1Score: 501,
+            p2Score: 501,
+            p1Legs: 0,
+            p2Legs: 0,
+            p1Sets: 0,
+            p2Sets: 0,
+            p1TotalScored: 0,
+            p1DartsThrown: 0,
+            p2TotalScored: 0,
+            p2DartsThrown: 0,
+            startingPlayer: 1,
+            currentPlayer: 1, 
+            lastTurnScore: null,
+            matchWinner: null,
+            bust: false
+        };
+
+        // Remote Sync & MQTT variables
+        let roomCode = generateRoomCode();
+        let remoteConnected = false;
+        let isRemoteMode = false;
+        let isWritingToRemote = false;
+        
+        let mqttClient = null;
+        let myClientId = 'darts_' + Math.random().toString(16).substr(2, 8);
+        let mqttTopic = '';
+
+        let undoStack = [];
+        let inputBuffer = "";
+        let matchQueue = [];
+        let popupWindow = null;
+        let activeBracketMatchId = null;
+        let tournamentSize = 8;
+        let qrCodeInstance = null;
+
+        let roundSettings = {
+            r32: { startingScore: 501, legs: 3, sets: 1 },
+            r16: { startingScore: 501, legs: 3, sets: 1 },
+            quarter: { startingScore: 501, legs: 3, sets: 1 },
+            semi: { startingScore: 501, legs: 3, sets: 2 },
+            final: { startingScore: 501, legs: 5, sets: 3 }
+        };
+
+        function generateRoomCode() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let code = 'DARTS-';
+            for (let i = 0; i < 4; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
+
+        function generateTournament(numPlayers) {
+            const roundsConfig = [
+                { count: 16, key: 'r32', name: 'Round of 32' },
+                { count: 8, key: 'r16', name: 'Round of 16' },
+                { count: 4, key: 'quarter', name: 'Quarter Final' },
+                { count: 2, key: 'semi', name: 'Semi Final' },
+                { count: 1, key: 'final', name: 'Championship Final' }
+            ];
+
+            const activeRounds = roundsConfig.filter(r => r.count < numPlayers);
+
+            let matchId = 0;
+            const roundMatches = [];
+            const allMatches = [];
+
+            activeRounds.forEach(r => {
+                const currentRoundMatches = [];
+                for (let i = 0; i < r.count; i++) {
+                    const matchTitle = r.count > 1 ? `${r.name} ${i + 1}` : r.name;
+                    const match = {
+                        id: matchId++,
+                        round: matchTitle,
+                        roundKey: r.key,
+                        roundTitle: r.name,
+                        p1: '', p2: '',
+                        p1Score: '', p2Score: '',
+                        winner: null,
+                        nextMatch: null, nextSlot: null
+                    };
+                    currentRoundMatches.push(match);
+                    allMatches.push(match);
+                }
+                roundMatches.push(currentRoundMatches);
+            });
+
+            for (let r = 0; r < roundMatches.length - 1; r++) {
+                const currentRound = roundMatches[r];
+                const nextRound = roundMatches[r + 1];
+
+                currentRound.forEach((match, i) => {
+                    const targetMatch = nextRound[Math.floor(i / 2)];
+                    match.nextMatch = targetMatch.id;
+                    match.nextSlot = i % 2 === 0 ? 'p1' : 'p2';
+                });
+            }
+
+            return allMatches;
+        }
+
+        let tournament = generateTournament(tournamentSize);
+
+        function changeTournamentSize(newSize) {
+            const size = parseInt(newSize);
+            if (isNaN(size) || size === tournamentSize) return;
+            tournamentSize = size;
+            activeBracketMatchId = null;
+            tournament = generateTournament(size);
+            render();
+            syncToRemote();
+        }
+
+        const els = {
+            body: document.getElementById('body-el'),
+            mainContent: document.getElementById('main-content'),
+            settingsModal: document.getElementById('settings-modal'),
+            settingsPanel: document.getElementById('settings-panel'),
+            confirmModal: document.getElementById('confirm-modal'),
+            confirmPanel: document.getElementById('confirm-panel'),
+            alertModal: document.getElementById('alert-modal'),
+            alertPanel: document.getElementById('alert-panel'),
+            alertMessage: document.getElementById('alert-message'),
+            remoteModal: document.getElementById('remote-modal'),
+            remotePanel: document.getElementById('remote-panel'),
+            modalRoomCode: document.getElementById('modal-room-code')
+        };
+
+        function listenToRemoteRoom() {
+            if (mqttClient) {
+                mqttClient.end();
+            }
+
+            remoteConnected = false;
+            mqttTopic = 'neon-darts-sync/room/' + roomCode;
+            
+            // Connect to HiveMQ public broker using WebSockets
+            mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+
+            mqttClient.on('connect', () => {
+                mqttClient.subscribe(mqttTopic);
+                remoteConnected = true;
+                render();
+                
+                // If we are the host, push our current state immediately
+                if (!isRemoteMode) {
+                    syncToRemote();
+                }
+            });
+
+            mqttClient.on('message', (topic, message) => {
+                if (topic === mqttTopic) {
+                    try {
+                        const data = JSON.parse(message.toString());
+                        if (data.sender === myClientId) return; // Ignore our own echo
+
+                        if (data.gameState) gameState = data.gameState;
+                        if (data.config) config = data.config;
+                        if (data.inputBuffer !== undefined) inputBuffer = data.inputBuffer;
+                        render();
+                    } catch(e) {
+                        console.error("MQTT parse error", e);
+                    }
+                }
+            });
+
+            mqttClient.on('error', (err) => {
+                console.error("MQTT Error:", err);
+                remoteConnected = false;
+                render();
+            });
+            
+            mqttClient.on('close', () => {
+                remoteConnected = false;
+                render();
+            });
+        }
+
+        function syncToRemote() {
+            if (mqttClient && mqttClient.connected) {
+                const payload = JSON.stringify({
+                    sender: myClientId,
+                    gameState,
+                    config,
+                    inputBuffer,
+                    lastUpdated: Date.now()
+                });
+                
+                // Retain flag ensures a newly connected phone gets the latest state instantly
+                mqttClient.publish(mqttTopic, payload, { retain: true });
+            }
+        }
+
+        function init() {
+            // Check URL params for room code and mode
+            const urlParams = new URLSearchParams(window.location.search);
+            const paramRoom = urlParams.get('room');
+            const paramMode = urlParams.get('mode');
+
+            if (paramRoom) {
+                roomCode = paramRoom.toUpperCase();
+            }
+            if (paramMode === 'remote') {
+                isRemoteMode = true;
+            }
+
+            document.getElementById('btn-close-settings').onclick = () => toggleSettings(false);
+            document.getElementById('btn-confirm-cancel').onclick = () => toggleConfirm(false);
+            document.getElementById('btn-confirm-yes').onclick = executeReset;
+            document.getElementById('btn-alert-ok').onclick = () => toggleAlert(false);
+
+            setupKeyboard();
+            setChroma(config.chromaColor);
+            updateConfig('color-indicator', config.colors.indicator);
+            
+            // Auto open popout if not in remote controller mode
+            if (!isRemoteMode) {
+                openPopout();
+
+                const autoPopoutFallback = () => {
+                    if (!popupWindow || popupWindow.closed) {
+                        openPopout();
+                    }
+                    window.removeEventListener('click', autoPopoutFallback);
+                    window.removeEventListener('keydown', autoPopoutFallback);
+                };
+                window.addEventListener('click', autoPopoutFallback);
+                window.addEventListener('keydown', autoPopoutFallback);
+            }
+
+            listenToRemoteRoom();
+            render();
+        }
+
+        function calculateAverage(playerNum) {
+            const totalScored = playerNum === 1 ? gameState.p1TotalScored : gameState.p2TotalScored;
+            const dartsThrown = playerNum === 1 ? gameState.p1DartsThrown : gameState.p2DartsThrown;
+            if (!dartsThrown || dartsThrown === 0) return "0.00";
+            return ((totalScored / dartsThrown) * 3).toFixed(2);
+        }
+
+        function hexToRgb(hex) {
+            const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+            hex = hex.replace(shorthandRegex, function(m, r, g, b) {
+                return r + r + g + g + b + b;
+            });
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '22, 163, 74';
+        }
+
+        function setupKeyboard() {
+            document.addEventListener('keydown', (e) => {
+                const isSettingsOpen = !els.settingsModal.classList.contains('hidden');
+                const isConfirmOpen = !els.confirmModal.classList.contains('hidden');
+                const isAlertOpen = !els.alertModal.classList.contains('hidden');
+                const isRemoteOpen = !els.remoteModal.classList.contains('hidden');
+                
+                if (isSettingsOpen || isConfirmOpen || isAlertOpen || isRemoteOpen) return;
+
+                const isTyping = e.target.tagName === 'INPUT' || 
+                                 e.target.tagName === 'TEXTAREA' || 
+                                 e.target.isContentEditable;
+
+                if (isTyping) return;
+
+                if (e.key >= '0' && e.key <= '9') handleNumClick(e.key);
+                else if (e.key === 'Enter') { e.preventDefault(); handleEnter(); }
+                else if (e.key === 'Backspace') handleBackspace();
+                else if (e.key.toLowerCase() === 'c' || e.key === 'Escape') clearInput();
+                else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                    e.preventDefault();
+                    handleUndo();
+                }
+            });
+        }
+
+        function openPopout() {
+            if (popupWindow && !popupWindow.closed) {
+                popupWindow.focus();
+                return;
+            }
+
+            popupWindow = window.open('', 'DartsOverlayPopout', 'width=980,height=520,toolbar=no,location=no,status=no,menubar=no,scrollbars=no,resizable=yes');
+
+            if (!popupWindow) {
+                render();
+                return;
+            }
+
+            setupPopupWindowDocument();
+            render();
+        }
+
+        function focusPopout() {
+            if (popupWindow && !popupWindow.closed) {
+                popupWindow.focus();
+            } else {
+                openPopout();
+            }
+        }
+
+        function setupPopupWindowDocument() {
+            if (!popupWindow) return;
+
+            const doc = popupWindow.document;
+            doc.open();
+            doc.write(`
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Darts Scoreboard Overlay</title>
+                    <script src="https://cdn.tailwindcss.com"><\/script>
+                    <script src="https://unpkg.com/lucide@latest"><\/script>
+                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+                    <style>
+                        body { font-family: 'Inter', sans-serif; margin: 0; padding: 1.5rem; min-height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+                        .font-mono { font-family: 'Roboto Mono', monospace; }
+                        
+                        :root {
+                            --indicator-color: ${hexToRgb(config.colors.indicator)};
+                        }
+
+                        @keyframes pulse-ring {
+                            0% { box-shadow: 0 0 0 0 rgba(var(--indicator-color), 0.7); }
+                            70% { box-shadow: 0 0 0 10px rgba(var(--indicator-color), 0); }
+                            100% { box-shadow: 0 0 0 0 rgba(var(--indicator-color), 0); }
+                        }
+                        .animate-pulse-ring {
+                            animation: pulse-ring 2s infinite;
+                        }
+
+                        [contenteditable="true"] {
+                            outline: none;
+                            cursor: text;
+                            border-bottom: 1px solid transparent;
+                            transition: all 0.2s;
+                        }
+                        [contenteditable="true"]:hover {
+                            background-color: rgba(255, 255, 255, 0.1);
+                            border-bottom-color: rgba(255, 255, 255, 0.3);
+                            border-radius: 4px;
+                        }
+                        [contenteditable="true"]:focus {
+                            background-color: rgba(0, 0, 0, 0.2);
+                            border-bottom-color: #10b981;
+                            border-radius: 4px;
+                        }
+                    </style>
+                </head>
+                <body id="popout-body" style="background-color: ${config.chromaColor};">
+                    <div id="popout-container" class="w-full max-w-3xl mx-auto"></div>
+                </body>
+                </html>
+            `);
+            doc.close();
+
+            popupWindow.addEventListener('beforeunload', () => {
+                popupWindow = null;
+                setTimeout(() => { render(); }, 100);
+            });
+        }
+
+        function exportColors() {
+            const data = {
+                colors: config.colors,
+                chromaColor: config.chromaColor
+            };
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "darts_theme.json");
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        }
+
+        function triggerImport() {
+            document.getElementById('import-file').click();
+        }
+
+        function importColors(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.chromaColor) setChroma(data.chromaColor);
+                    if (data.colors) {
+                        Object.keys(data.colors).forEach(key => {
+                            updateConfig('color-' + key, data.colors[key]);
+                        });
+                    }
+                    render();
+                    toggleAlert(true, "Theme loaded successfully");
+                } catch (err) {
+                    console.error(err);
+                    toggleAlert(true, "Failed to load theme file");
+                }
+            };
+            reader.readAsText(file);
+            input.value = '';
+        }
+
+        function updateConfig(key, value) {
+            if (key === 'startingScore' || key === 'legsPerSet' || key === 'setsToWin') {
+                config[key] = parseInt(value);
+                render();
+            } else if (key === 'showCheckouts' || key === 'showAverage') {
+                config[key] = value;
+                render();
+            } else if (key === 'customHostUrl') {
+                config[key] = value.trim();
+                localStorage.setItem('dartsCustomHost', config[key]); // Persistent storage for specific display unit
+            } else if (key.startsWith('color-')) {
+                const colorKey = key.replace('color-', '');
+                config.colors[colorKey] = value;
+                
+                if (colorKey === 'headerBg') updateStyles('.tv-style-header', 'backgroundColor', value);
+                if (colorKey === 'headerText') updateStyles('.tv-style-header', 'color', value);
+                if (colorKey === 'playerBg') updateStyles('.tv-style-player', 'backgroundColor', value);
+                if (colorKey === 'playerText') updateStyles('.tv-style-player', 'color', value);
+                if (colorKey === 'scoreBg') updateStyles('.tv-style-score', 'backgroundColor', value);
+                if (colorKey === 'scoreText') updateStyles('.tv-style-score', 'color', value);
+                
+                if (colorKey === 'indicator') {
+                    const rgb = hexToRgb(value);
+                    document.documentElement.style.setProperty('--indicator-color', rgb);
+                    if (popupWindow && !popupWindow.closed) {
+                        popupWindow.document.documentElement.style.setProperty('--indicator-color', rgb);
+                    }
+                    updateStyles('.tv-indicator-dot', 'backgroundColor', value);
+                    document.querySelectorAll('.tv-indicator-dot').forEach(el => {
+                        el.style.boxShadow = `0 0 10px ${value}CC`; 
+                    });
+                }
+            } else {
+                config[key] = value.trim();
+            }
+
+            syncToRemote();
+
+            if (popupWindow && !popupWindow.closed) {
+                renderTvOverlay(true);
+            }
+        }
+
+        function updateStyles(selector, prop, value) {
+            document.querySelectorAll(selector).forEach(el => el.style[prop] = value);
+            if (popupWindow && !popupWindow.closed) {
+                popupWindow.document.querySelectorAll(selector).forEach(el => el.style[prop] = value);
+            }
+        }
+
+        function updatePlayerName(playerNum, value) {
+            const val = value.trim();
+            if (playerNum === 1) gameState.p1Name = val;
+            else gameState.p2Name = val;
+            
+            if (activeBracketMatchId !== null && tournament[activeBracketMatchId]) {
+                if (playerNum === 1) tournament[activeBracketMatchId].p1 = val;
+                else tournament[activeBracketMatchId].p2 = val;
+            }
+            render();
+            syncToRemote();
+        }
+
+        function setPlayer(num) {
+            gameState.startingPlayer = num;
+            gameState.currentPlayer = num;
+            render();
+            syncToRemote();
+        }
+
+        function setQuickTab(tab) {
+            config.activeQuickTab = tab;
+            render();
+        }
+
+        function setBracketTab(tab) {
+            config.bracketActiveTab = tab;
+            render();
+        }
+
+        function updateRoundSetting(roundKey, field, value) {
+            roundSettings[roundKey][field] = parseInt(value);
+        }
+
+        function addMatchToQueue() {
+            const p1 = document.getElementById('queue-p1').value.trim();
+            const p2 = document.getElementById('queue-p2').value.trim();
+            if (p1 && p2) {
+                matchQueue.push({ p1, p2 });
+                render();
+            } else {
+                toggleAlert(true, "Please enter names for both players.");
+            }
+        }
+
+        function removeFromQueue(index) {
+            matchQueue.splice(index, 1);
+            render();
+        }
+
+        function loadFromQueue(index) {
+            const match = matchQueue[index];
+            gameState.p1Name = match.p1;
+            gameState.p2Name = match.p2;
+            matchQueue.splice(index, 1);
+            activeBracketMatchId = null;
+            executeReset();
+        }
+
+        function updateTournament(matchId, slot, value) {
+            tournament[matchId][slot] = value;
+            if (activeBracketMatchId === matchId) {
+                if (slot === 'p1') gameState.p1Name = value;
+                if (slot === 'p2') gameState.p2Name = value;
+            }
+            syncToRemote();
+        }
+
+        function updateTournamentScore(matchId, slot, value) {
+            tournament[matchId][slot] = value;
+            render();
+            syncToRemote();
+        }
+
+        function advanceTournament(matchId, slot) {
+            const match = tournament[matchId];
+            const winnerName = match[slot];
+            if (!winnerName.trim()) {
+                toggleAlert(true, "Please enter a player name before advancing them.");
+                return;
+            }
+            match.winner = slot === 'p1' ? 1 : 2;
+            if (match.nextMatch !== null) {
+                tournament[match.nextMatch][match.nextSlot] = winnerName;
+            }
+            render();
+            syncToRemote();
+        }
+
+        function loadTournamentMatch(matchId) {
+            const match = tournament[matchId];
+            if (!match.p1.trim() || !match.p2.trim()) {
+                toggleAlert(true, "Both players must have names before loading the match.");
+                return;
+            }
+
+            activeBracketMatchId = matchId;
+            gameState.p1Name = match.p1;
+            gameState.p2Name = match.p2;
+            config.matchTitle = match.round;
+
+            const rSettings = roundSettings[match.roundKey] || { startingScore: 501, legs: 3, sets: 1 };
+            config.startingScore = rSettings.startingScore;
+            config.legsPerSet = rSettings.legs;
+            config.setsToWin = rSettings.sets;
+
+            match.p1Score = "0";
+            match.p2Score = "0";
+            match.winner = null;
+
+            executeReset();
+        }
+
+        function syncActiveMatchToBracket() {
+            if (activeBracketMatchId === null || !tournament[activeBracketMatchId]) return;
+
+            const match = tournament[activeBracketMatchId];
+            
+            if (config.setsToWin > 1) {
+                match.p1Score = gameState.p1Sets;
+                match.p2Score = gameState.p2Sets;
+            } else {
+                match.p1Score = gameState.p1Legs;
+                match.p2Score = gameState.p2Legs;
+            }
+
+            if (gameState.matchWinner) {
+                match.winner = gameState.matchWinner;
+                const winnerName = gameState.matchWinner === 1 ? match.p1 : match.p2;
+                if (match.nextMatch !== null && winnerName.trim()) {
+                    tournament[match.nextMatch][match.nextSlot] = winnerName;
+                }
+            }
+        }
+
+        function clearBracket() {
+            activeBracketMatchId = null;
+            tournament.forEach(m => { 
+                m.p1 = ''; 
+                m.p2 = ''; 
+                m.p1Score = ''; 
+                m.p2Score = ''; 
+                m.winner = null; 
+            });
+            render();
+            syncToRemote();
+        }
+
+        function exportBracketToExcel() {
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const fileName = `Darts_Tournament_Bracket_${dateStr}.xlsx`;
+
+            if (typeof XLSX !== 'undefined') {
+                const excelData = [
+                    ["Round", "Match ID", "Player 1", "P1 Score", "P2 Score", "Player 2", "Winner", "Next Round Match"]
+                ];
+
+                tournament.forEach(m => {
+                    let winnerName = "-";
+                    if (m.winner === 1) winnerName = m.p1;
+                    else if (m.winner === 2) winnerName = m.p2;
+
+                    excelData.push([
+                        m.round,
+                        `Match #${m.id + 1}`,
+                        m.p1 || "",
+                        m.p1Score !== undefined ? m.p1Score : "",
+                        m.p2Score !== undefined ? m.p2Score : "",
+                        m.p2 || "",
+                        winnerName,
+                        m.nextMatch !== null ? `Match #${m.nextMatch + 1}` : "Final Winner"
+                    ]);
+                });
+
+                const worksheet = XLSX.utils.aoa_to_sheet(excelData);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Tournament Results");
+
+                const columnWidths = excelData[0].map((_, colIdx) => {
+                    return Math.max(...excelData.map(row => (row[colIdx] ? row[colIdx].toString().length : 0))) + 4;
+                });
+                worksheet['!cols'] = columnWidths.map(w => ({ wch: w }));
+
+                XLSX.writeFile(workbook, fileName);
+            } else {
+                let csvContent = "\uFEFFRound,Match ID,Player 1,P1 Score,P2 Score,Player 2,Winner,Next Match\n";
+                tournament.forEach(m => {
+                    let winnerName = "-";
+                    if (m.winner === 1) winnerName = m.p1;
+                    else if (m.winner === 2) winnerName = m.p2;
+
+                    csvContent += `"${m.round}","Match #${m.id + 1}","${m.p1 || ''}","${m.p1Score || ''}","${m.p2Score || ''}","${m.p2 || ''}","${winnerName}","${m.nextMatch !== null ? 'Match #' + (m.nextMatch + 1) : 'Final'}"\n`;
+                });
+
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement("a");
+                const url = URL.createObjectURL(blob);
+                link.setAttribute("href", url);
+                link.setAttribute("download", `Darts_Tournament_Bracket_${dateStr}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+
+        function toggleModal(modal, panel, show) {
+            if (show) {
+                modal.classList.remove('hidden');
+                setTimeout(() => {
+                    modal.classList.remove('opacity-0');
+                    panel.classList.remove('scale-95');
+                }, 10);
+            } else {
+                modal.classList.add('opacity-0');
+                panel.classList.add('scale-95');
+                setTimeout(() => modal.classList.add('hidden'), 300);
+            }
+        }
+
+        function toggleSettings(show) { toggleModal(els.settingsModal, els.settingsPanel, show); }
+        function toggleConfirm(show) { toggleModal(els.confirmModal, els.confirmPanel, show); }
+        function toggleAlert(show, msg = "") {
+            if(show && msg) els.alertMessage.innerText = msg;
+            toggleModal(els.alertModal, els.alertPanel, show);
+        }
+
+        function getRemoteUrl() {
+            const customHost = document.getElementById('custom-host-url')?.value.trim();
+            let baseUrl = "";
+            if (customHost) {
+                baseUrl = customHost.replace(/\/+$/, "");
+                if (!baseUrl.startsWith('http')) baseUrl = 'https://' + baseUrl;
+            } else if (window.location.protocol === 'file:') {
+                baseUrl = "http://192.168.1.X:8000"; 
+            } else {
+                baseUrl = window.location.href.split('?')[0].split('#')[0];
+            }
+            return `${baseUrl}?room=${roomCode}&mode=remote`;
+        }
+
+        function updateRemoteQrCode() {
+            const remoteUrl = getRemoteUrl();
+            const qrContainer = document.getElementById('qrcode');
+            if (!qrContainer) return;
+            qrContainer.innerHTML = '';
+            
+            if (typeof QRCode !== 'undefined') {
+                qrCodeInstance = new QRCode(qrContainer, {
+                    text: remoteUrl,
+                    width: 160,
+                    height: 160,
+                    colorDark: "#020617",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+            }
+        }
+
+        function toggleRemoteModal(show) {
+            if (show) {
+                els.modalRoomCode.innerText = roomCode;
+                const isFileProtocol = window.location.protocol === 'file:';
+                const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                
+                const warningEl = document.getElementById('file-protocol-warning');
+                const warningText = document.getElementById('warning-text');
+                
+                if (warningEl && warningText) {
+                    if (isFileProtocol) {
+                        warningText.innerHTML = `Opened as a local file (<b>file://</b>). Your phone cannot connect to this. You must run an HTTP server (e.g. VS Code Live Server). Enter your network IP and port above (e.g. <b>http://192.168.1.50:5500</b>).`;
+                        warningEl.classList.remove('hidden');
+                    } else if (isLocalhost) {
+                        warningText.innerHTML = `Running on <b>localhost</b>. Phones cannot resolve localhost. Enter your PC's network IP above instead (e.g. <b>http://192.168.1.50:${window.location.port || '8000'}</b>).`;
+                        warningEl.classList.remove('hidden');
+                    } else {
+                        warningEl.classList.add('hidden');
+                    }
+                }
+                updateRemoteQrCode();
+            }
+            toggleModal(els.remoteModal, els.remotePanel, show);
+        }
+
+        function copyRoomLink() {
+            const remoteUrl = getRemoteUrl();
+            const tempInput = document.createElement('input');
+            tempInput.value = remoteUrl;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            toggleAlert(true, "Remote controller link copied: " + remoteUrl);
+        }
+
+        function joinRoom(newCode) {
+            newCode = newCode.trim().toUpperCase();
+            if (!newCode || newCode === roomCode) return;
+            
+            roomCode = newCode;
+            
+            // Update URL to reflect the new room for easy bookmarking/sharing
+            const url = new URL(window.location);
+            url.searchParams.set('room', roomCode);
+            window.history.replaceState({}, '', url);
+
+            // Re-establish connection
+            remoteConnected = false;
+            listenToRemoteRoom();
+            
+            if (!els.remoteModal.classList.contains('hidden')) {
+                els.modalRoomCode.value = roomCode;
+                updateRemoteQrCode();
+            }
+            
+            render();
+            toggleAlert(true, `Joined room: ${roomCode}`);
+        }
+
+        function setChroma(color) {
+            config.chromaColor = color;
+            els.body.style.backgroundColor = color;
+            
+            if (popupWindow && !popupWindow.closed) {
+                popupWindow.document.body.style.backgroundColor = color;
+            }
+
+            if (color === '#00b140') {
+                updateConfig('color-indicator', '#dc2626');
+            } else if (color === '#0047bb' || color === '#ff00ff') {
+                updateConfig('color-indicator', '#16a34a');
+            }
+
+            const picker = document.getElementById('chroma-picker-input');
+            if (picker) picker.value = color;
+
+            const indicatorPicker = document.querySelector('input[oninput*="color-indicator"]');
+            if(indicatorPicker) {
+                indicatorPicker.value = config.colors.indicator;
+            }
+        }
+
+        function getCheckout(score) {
+            if (score > 170 || score < 2) return null;
+            return CHECKOUTS[score] || null;
+        }
+
+        function render() {
+            els.mainContent.innerHTML = '';
+            
+            const isPoppedOut = popupWindow && !popupWindow.closed;
+            
+            if (isPoppedOut) {
+                renderTvOverlay(true);
+            }
+
+            if (isRemoteMode) {
+                renderRemotePadView();
+            } else {
+                renderPopoutBanner();
+                renderOperatorConsole();
+                renderBracketSection();
+            }
+
+            lucide.createIcons();
+            
+            if (isPoppedOut && popupWindow.lucide) {
+                popupWindow.lucide.createIcons();
+            }
+        }
+
+        function getScoreboardHTML(isPoppedOut = true) {
+            const showSets = config.setsToWin > 1;
+            const showLegs = config.legsPerSet > 0;
+
+            const headerStyle = `background-color: ${config.colors.headerBg}; color: ${config.colors.headerText};`;
+            const playerStyle = `background-color: ${config.colors.playerBg}; color: ${config.colors.playerText};`;
+            const scoreStyle = `background-color: ${config.colors.scoreBg}; color: ${config.colors.scoreText};`;
+            const indicatorStyle = `background-color: ${config.colors.indicator}; box-shadow: 0 0 10px ${config.colors.indicator}CC;`;
+
+            const p1Check = getCheckout(gameState.p1Score);
+            const p2Check = getCheckout(gameState.p2Score);
+            const isCheckout = config.showCheckouts && ((gameState.currentPlayer === 1 && p1Check) || (gameState.currentPlayer === 2 && p2Check));
+            const hint = isCheckout && !gameState.matchWinner ? (gameState.currentPlayer === 1 ? p1Check : p2Check) : "";
+            
+            const winnerName = gameState.matchWinner === 1 ? gameState.p1Name : (gameState.matchWinner === 2 ? gameState.p2Name : null);
+
+            const p1Avg = calculateAverage(1);
+            const p2Avg = calculateAverage(2);
+
+            let p1Status = '';
+            if (gameState.matchWinner === 1) {
+                p1Status = `<div class="bg-yellow-400 text-black text-xs sm:text-sm font-black px-2 py-1 rounded uppercase tracking-widest ml-3 shadow-[0_0_15px_rgba(250,204,21,0.6)] animate-pulse">Winner</div>`;
+            } else if (gameState.currentPlayer === 1 && !gameState.matchWinner) {
+                p1Status = `<div class="tv-indicator-dot w-6 h-6 rounded-full border-2 border-white/50 animate-pulse-ring ml-3" style="${indicatorStyle}"></div>`;
+            }
+
+            let p2Status = '';
+            if (gameState.matchWinner === 2) {
+                p2Status = `<div class="bg-yellow-400 text-black text-xs sm:text-sm font-black px-2 py-1 rounded uppercase tracking-widest ml-3 shadow-[0_0_15px_rgba(250,204,21,0.6)] animate-pulse">Winner</div>`;
+            } else if (gameState.currentPlayer === 2 && !gameState.matchWinner) {
+                p2Status = `<div class="tv-indicator-dot w-6 h-6 rounded-full border-2 border-white/50 animate-pulse-ring ml-3" style="${indicatorStyle}"></div>`;
+            }
+
+            let bottomBarContent = '';
+            let bottomBarClasses = 'bg-transparent border-t-0 border-transparent h-10';
+
+            if (gameState.matchWinner) {
+                bottomBarClasses = 'bg-gradient-to-r from-yellow-500 via-yellow-400 to-yellow-500 border-t-2 border-yellow-200 h-12';
+                bottomBarContent = `<div class="text-black text-xl font-black uppercase tracking-widest drop-shadow-md py-1 animate-pulse">${winnerName} WINS THE MATCH!</div>`;
+            } else if (isCheckout) {
+                bottomBarClasses = 'bg-slate-900 border-t-2 border-emerald-500/50 h-10';
+                bottomBarContent = `<div class="text-white text-lg font-mono font-bold animate-pulse">Checkout: <span class="text-yellow-400">${hint}</span></div>`;
+            }
+
+            let gridCols = 'grid-cols-[1fr_8rem]'; 
+            if (showSets && showLegs) gridCols = 'grid-cols-[1fr_5rem_5rem_8rem]';
+            else if (showSets) gridCols = 'grid-cols-[1fr_5rem_8rem]';
+            else if (showLegs) gridCols = 'grid-cols-[1fr_5rem_8rem]';
+
+            const showSetsHeader = showSets ? '<div class="text-center">Sets</div>' : '';
+            const showLegsHeader = showLegs ? '<div class="text-center">Legs</div>' : '';
+            const footerBorderClass = (!isCheckout && !gameState.matchWinner) ? 'rounded-b-xl' : '';
+            
+            const p1SetsHtml = showSets ? '<div class="tv-style-score flex items-center justify-center font-bold text-4xl border-l border-black/20" style="' + scoreStyle + '">' + gameState.p1Sets + '</div>' : '';
+            const p1LegsHtml = showLegs ? '<div class="tv-style-score flex items-center justify-center font-bold text-4xl border-l border-black/20" style="' + scoreStyle + '">' + gameState.p1Legs + '</div>' : '';
+            const p2SetsHtml = showSets ? '<div class="tv-style-score flex items-center justify-center font-bold text-4xl border-l border-black/20" style="' + scoreStyle + '">' + gameState.p2Sets + '</div>' : '';
+            const p2LegsHtml = showLegs ? '<div class="tv-style-score flex items-center justify-center font-bold text-4xl border-l border-black/20" style="' + scoreStyle + '">' + gameState.p2Legs + '</div>' : '';
+
+            const targetWindow = 'window.opener.';
+
+            return `
+                <div class="w-full rounded-xl overflow-hidden select-none font-sans relative transition-all">
+                    <div class="tv-style-header grid ${gridCols} items-center py-2 font-bold shadow-md relative z-10 text-lg uppercase tracking-wider" style="${headerStyle}">
+                        <div class="pl-5 truncate" contenteditable="true" onblur="${targetWindow}updateConfig('matchTitle', this.innerText)">${config.matchTitle}</div>
+                        ${showSetsHeader}
+                        ${showLegsHeader}
+                        <div></div>
+                    </div>
+
+                    <div class="grid ${gridCols} border-b border-black/10">
+                        <div class="tv-style-player flex items-center justify-between px-5 py-3 relative" style="${playerStyle}">
+                            <div class="flex flex-col min-w-0">
+                                <span class="font-bold text-3xl truncate leading-tight tracking-tight outline-none" contenteditable="true" onblur="${targetWindow}updatePlayerName(1, this.innerText)">${gameState.p1Name}</span>
+                                ${config.showAverage ? `<div class="text-xs font-mono font-bold opacity-80 tracking-wider">AVG: ${p1Avg}</div>` : ''}
+                            </div>
+                            ${p1Status}
+                        </div>
+                        ${p1SetsHtml}
+                        ${p1LegsHtml}
+                        <div class="tv-style-score flex items-center justify-center font-bold text-6xl border-l border-black/20 py-2 tracking-tighter" style="${scoreStyle}">${gameState.p1Score}</div>
+                    </div>
+
+                    <div class="grid ${gridCols}">
+                        <div class="tv-style-player flex items-center justify-between px-5 py-3 relative" style="${playerStyle}">
+                            <div class="flex flex-col min-w-0">
+                                <span class="font-bold text-3xl truncate leading-tight tracking-tight outline-none" contenteditable="true" onblur="${targetWindow}updatePlayerName(2, this.innerText)">${gameState.p2Name}</span>
+                                ${config.showAverage ? `<div class="text-xs font-mono font-bold opacity-80 tracking-wider">AVG: ${p2Avg}</div>` : ''}
+                            </div>
+                            ${p2Status}
+                        </div>
+                        ${p2SetsHtml}
+                        ${p2LegsHtml}
+                        <div class="tv-style-score flex items-center justify-center font-bold text-6xl border-l border-black/20 py-2 tracking-tighter" style="${scoreStyle}">${gameState.p2Score}</div>
+                    </div>
+
+                    <div class="tv-style-header px-5 py-2 text-center text-sm font-bold tracking-widest uppercase shadow-inner opacity-90 outline-none transition-all duration-300 ${footerBorderClass}" style="${headerStyle}" contenteditable="true" onblur="${targetWindow}updateConfig('footerText', this.innerText)">
+                        ${config.footerText}
+                    </div>
+
+                    <div class="w-full flex items-center justify-center transition-all duration-300 ${bottomBarClasses}">
+                        ${bottomBarContent}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTvOverlay(isPoppedOut = true) {
+            if (isPoppedOut && popupWindow && !popupWindow.closed) {
+                const popoutContainer = popupWindow.document.getElementById('popout-container');
+                if (popoutContainer) {
+                    popoutContainer.innerHTML = getScoreboardHTML(true);
+                }
+            }
+        }
+
+        function renderPopoutBanner() {
+            const isPoppedOut = popupWindow && !popupWindow.closed;
+            
+            const statusDot = isPoppedOut 
+                ? `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>` 
+                : `<span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>`;
+
+            const remoteStatusDot = remoteConnected 
+                ? `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>` 
+                : `<span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>`;
+
+            const statusText = isPoppedOut 
+                ? `Scoreboard Active in Popout Window` 
+                : `Scoreboard Window Not Open`;
+
+            const actionButton = isPoppedOut 
+                ? `<button onclick="focusPopout()" class="w-full md:w-auto bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-colors">
+                    <i data-lucide="maximize-2" class="w-4 h-4"></i> Focus Popout
+                   </button>`
+                : `<button onclick="openPopout()" class="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-colors shadow-lg shadow-emerald-950/50">
+                    <i data-lucide="external-link" class="w-4 h-4"></i> Launch Popout
+                   </button>`;
+
+            const html = `
+                <div class="flex-none w-full max-w-6xl mx-auto mb-1 bg-slate-900 border-2 border-emerald-500/80 rounded-2xl p-4 md:p-6 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div class="flex items-center gap-3 w-full md:w-auto">
+                        <div class="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-xl text-emerald-400 animate-pulse">
+                            <i data-lucide="monitor" class="w-7 h-7"></i>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                ${statusDot}
+                                <h3 class="text-base md:text-lg font-bold text-white uppercase tracking-wider">${statusText}</h3>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-0.5">Live updates sync instantly to your external display or capture window.</p>
+                        </div>
+                    </div>
+
+                    <!-- Remote Score App Button & Room Pill -->
+                    <div class="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+                        <div class="bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-xl flex items-center gap-2" title="Edit to join a different room">
+                            ${remoteStatusDot}
+                            <span class="text-[10px] text-slate-400 font-bold uppercase">Room:</span>
+                            <input type="text" value="${roomCode}" onchange="joinRoom(this.value)" onfocus="this.select()" class="bg-transparent text-xs font-mono font-extrabold text-emerald-400 outline-none w-20 uppercase border-b border-transparent focus:border-emerald-500/50 transition-colors">
+                        </div>
+                        
+                        <button onclick="toggleRemoteModal(true)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-colors shadow-lg shadow-indigo-950/50">
+                            <i data-lucide="smartphone" class="w-4 h-4"></i> Remote App
+                        </button>
+                        
+                        ${actionButton}
+                    </div>
+                </div>
+            `;
+            els.mainContent.innerHTML += html;
+        }
+
+        function renderRemotePadView() {
+            const activePlayerName = gameState.currentPlayer === 1 ? gameState.p1Name : gameState.p2Name;
+            const activeScore = gameState.currentPlayer === 1 ? gameState.p1Score : gameState.p2Score;
+            const activeCheck = getCheckout(activeScore);
+            
+            const quickButtons = [26, 41, 45, 60, 85, 100, 140, 180].map(val => `
+                <button onclick="inputBuffer='${val}'; handleEnter();" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-mono font-bold text-sm py-2 rounded-lg border border-slate-700/80 shadow-md transition-all active:scale-95">${val}</button>
+            `).join('');
+
+            const numButtons = [1,2,3,4,5,6,7,8,9].map(n => 
+                `<button onclick="handleNumClick('${n}')" class="bg-slate-800 hover:bg-slate-700 text-white text-2xl font-black py-3 rounded-xl border border-slate-700 shadow-md active:scale-95">${n}</button>`
+            ).join('');
+
+            const bufferDisplayClass = inputBuffer ? 'text-white' : 'text-slate-500';
+
+            const html = `
+                <div class="max-w-md mx-auto w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col p-4 gap-4">
+                    <!-- Room & Header info -->
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                            <span class="text-xs font-mono font-bold text-slate-300 flex items-center gap-1">ROOM: 
+                                <input type="text" value="${roomCode}" onchange="joinRoom(this.value)" onfocus="this.select()" class="bg-transparent text-emerald-400 outline-none w-20 uppercase border-b border-transparent focus:border-emerald-500/50 transition-colors">
+                            </span>
+                        </div>
+                        <button onclick="window.location.href=window.location.pathname" class="text-[10px] uppercase font-bold text-slate-400 hover:text-white bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700 transition-colors">
+                            Exit Remote Mode
+                        </button>
+                    </div>
+
+                    <!-- Active Player Score Card -->
+                    <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 text-center relative overflow-hidden shadow-inner">
+                        <div class="text-xs text-slate-400 uppercase font-bold tracking-widest mb-1">Current Turn</div>
+                        <div class="text-2xl font-black text-white truncate px-2 mb-1">${activePlayerName}</div>
+                        <div class="text-5xl font-extrabold text-emerald-400 font-mono tracking-tight">${activeScore}</div>
+                        ${activeCheck ? `<div class="mt-2 text-xs font-mono font-bold text-yellow-400 bg-yellow-950/40 border border-yellow-500/30 rounded-lg py-1 px-2">Checkout: ${activeCheck}</div>` : ''}
+                    </div>
+
+                    <!-- Input Buffer Bar -->
+                    <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+                        <span class="text-xs text-slate-400 uppercase font-bold">Entered:</span>
+                        <div class="text-3xl font-mono font-bold tracking-widest ${bufferDisplayClass}">${inputBuffer || '0'}</div>
+                    </div>
+
+                    <!-- Quick Preset Buttons -->
+                    <div class="grid grid-cols-4 gap-1.5">
+                        ${quickButtons}
+                    </div>
+
+                    <!-- Keypad grid -->
+                    <div class="grid grid-cols-3 gap-2">
+                        ${numButtons}
+                        <button onclick="clearInput()" class="bg-slate-800 text-red-400 font-bold text-sm py-3 rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="eraser" class="w-5 h-5"></i></button>
+                        <button onclick="handleNumClick('0')" class="bg-slate-800 text-white text-2xl font-black py-3 rounded-xl border border-slate-700 shadow-md">0</button>
+                        <button onclick="handleBackspace()" class="bg-slate-800 text-amber-400 font-bold text-sm py-3 rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="chevron-left" class="w-6 h-6"></i></button>
+                    </div>
+
+                    <!-- Action Controls -->
+                    <div class="grid grid-cols-2 gap-2 mt-1">
+                        <button onclick="handleUndo()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl font-bold uppercase text-xs flex items-center justify-center gap-2 border border-slate-700">
+                            <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Undo
+                        </button>
+                        <button onclick="handleEnter()" class="bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-black uppercase text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50">
+                            Submit <i data-lucide="corner-down-left" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+            els.mainContent.innerHTML = html;
+        }
+
+        function renderOperatorConsole() {
+            const html = `
+                <div class="max-w-6xl mx-auto w-full flex-grow flex flex-col justify-center">
+                    ${getKeypadHTML()}
+                </div>
+            `;
+            els.mainContent.innerHTML += html;
+        }
+
+        function renderBracketSection() {
+            const activeTab = config.bracketActiveTab;
+            const bracketTabClass = activeTab === 'bracket' ? "text-emerald-400 border-b-2 border-emerald-500 bg-slate-800/50" : "text-slate-400 hover:text-white hover:bg-slate-800/30";
+            const settingsTabClass = activeTab === 'settings' ? "text-emerald-400 border-b-2 border-emerald-500 bg-slate-800/50" : "text-slate-400 hover:text-white hover:bg-slate-800/30";
+
+            let tabBody = activeTab === 'bracket' ? getVisualBracketHTML() : getBracketSettingsHTML();
+
+            const html = `
+                <div class="max-w-6xl mx-auto w-full bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden mt-2">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-950 border-b border-slate-800 px-6 py-4 gap-4">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2 bg-emerald-900/40 text-emerald-400 rounded-xl border border-emerald-500/20">
+                                <i data-lucide="git-merge" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-base font-bold text-white uppercase tracking-wider">Tournament Bracket</h2>
+                                <p class="text-[11px] text-slate-400">${tournamentSize}-Player Single Elimination Tree</p>
+                            </div>
+                        </div>
+                        
+                        <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                            <div class="flex items-center bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs">
+                                <label class="text-slate-400 font-bold uppercase text-[10px] mr-2">Players:</label>
+                                <select onchange="changeTournamentSize(this.value)" class="bg-transparent text-white font-bold outline-none cursor-pointer">
+                                    <option value="4" class="bg-slate-900" ${tournamentSize === 4 ? 'selected' : ''}>4 Players</option>
+                                    <option value="8" class="bg-slate-900" ${tournamentSize === 8 ? 'selected' : ''}>8 Players</option>
+                                    <option value="16" class="bg-slate-900" ${tournamentSize === 16 ? 'selected' : ''}>16 Players</option>
+                                    <option value="32" class="bg-slate-900" ${tournamentSize === 32 ? 'selected' : ''}>32 Players</option>
+                                </select>
+                            </div>
+
+                            <div class="flex bg-slate-900 rounded-lg border border-slate-800 overflow-hidden text-xs font-bold uppercase">
+                                <button onclick="setBracketTab('bracket')" class="px-3 py-1.5 transition-colors ${bracketTabClass}">Tree</button>
+                                <button onclick="setBracketTab('settings')" class="px-3 py-1.5 transition-colors ${settingsTabClass}">Rules</button>
+                            </div>
+
+                            <button onclick="exportBracketToExcel()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs uppercase font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-emerald-900/30" title="Export Bracket to Excel">
+                                <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i> Export
+                            </button>
+
+                            <button onclick="clearBracket()" class="bg-red-900/40 hover:bg-red-900/60 text-red-300 border border-red-900/50 px-3 py-1.5 rounded-lg text-xs uppercase font-bold transition-colors flex items-center gap-1.5 shadow-md" title="Clear Bracket Names">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Clear
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="p-6">
+                        ${tabBody}
+                    </div>
+                </div>
+            `;
+            els.mainContent.innerHTML += html;
+        }
+
+        function getKeypadHTML() {
+            const bgClass = 'bg-slate-800 border-slate-600';
+            const btnBg = 'bg-slate-700 hover:bg-slate-600';
+            const inputBg = 'bg-slate-950 border-slate-700';
+            
+            const activeTabClass = "text-emerald-400 border-b-2 border-emerald-500 bg-slate-800/50";
+            const inactiveTabClass = "text-slate-400 hover:text-white hover:bg-slate-800/30";
+
+            const chromaColors = ['#00b140', '#0047bb', '#ff00ff'];
+
+            const numButtons = [1,2,3,4,5,6,7,8,9].map(n => 
+                `<button onclick="handleNumClick('${n}')" class="${btnBg} text-white text-2xl md:text-3xl font-bold rounded-lg shadow-lg shadow-black/20">${n}</button>`
+            ).join('');
+
+            const undoDisabled = undoStack.length === 0 ? 'disabled' : '';
+            const clearDisabled = !inputBuffer ? 'disabled' : '';
+            const bufferDisplayClass = inputBuffer ? 'text-white' : 'text-slate-500';
+            const bufferText = inputBuffer || "0";
+
+            const matchTabClass = config.activeQuickTab === 'match' ? activeTabClass : inactiveTabClass;
+            const styleTabClass = config.activeQuickTab === 'style' ? activeTabClass : inactiveTabClass;
+            const queueTabClass = config.activeQuickTab === 'queue' ? activeTabClass : inactiveTabClass;
+            
+            let tabContent = '';
+
+            const p1Avg = calculateAverage(1);
+            const p2Avg = calculateAverage(2);
+            
+            if (config.activeQuickTab === 'match') {
+                const s301 = config.startingScore === 301 ? 'selected' : '';
+                const s501 = config.startingScore === 501 ? 'selected' : '';
+                const s701 = config.startingScore === 701 ? 'selected' : '';
+                const p1Checked = gameState.currentPlayer === 1 ? 'checked' : '';
+                const p2Checked = gameState.currentPlayer === 2 ? 'checked' : '';
+                const checkoutsChecked = config.showCheckouts ? 'checked' : '';
+                const averagesChecked = config.showAverage ? 'checked' : '';
+
+                tabContent = `
+                    <div class="flex flex-col gap-2 py-0.5">
+                        <div class="grid grid-cols-3 gap-2">
+                            <div>
+                                <label class="block text-slate-300 font-bold uppercase text-xs mb-1">Score</label>
+                                <select onchange="updateConfig('startingScore', this.value)" class="w-full ${inputBg} rounded px-2 py-1 text-white text-sm font-bold outline-none focus:border-emerald-500 border cursor-pointer">
+                                    <option value="301" ${s301}>301</option>
+                                    <option value="501" ${s501}>501</option>
+                                    <option value="701" ${s701}>701</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-slate-300 font-bold uppercase text-xs mb-1">Legs</label>
+                                <input type="number" min="0" value="${config.legsPerSet}" onchange="updateConfig('legsPerSet', this.value)" onkeydown="return false" class="w-full ${inputBg} rounded px-2 py-1 text-white text-sm font-bold outline-none focus:border-emerald-500 border">
+                            </div>
+                            <div>
+                                <label class="block text-slate-300 font-bold uppercase text-xs mb-1">Sets</label>
+                                <input type="number" min="1" value="${config.setsToWin}" onchange="updateConfig('setsToWin', this.value)" onkeydown="return false" class="w-full ${inputBg} rounded px-2 py-1 text-white text-sm font-bold outline-none focus:border-emerald-500 border">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-slate-300 font-bold uppercase text-xs mb-1">Starting Player</label>
+                            <div class="grid grid-cols-2 gap-2">
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="startPlayer" class="peer sr-only" onchange="setPlayer(1)" ${p1Checked}>
+                                    <div class="w-full text-center py-1 rounded bg-slate-950 border border-slate-700 peer-checked:bg-emerald-600 peer-checked:border-emerald-500 peer-checked:text-white text-slate-300 text-xs sm:text-sm font-bold transition-all hover:bg-slate-900 truncate px-1">P1 (${gameState.p1Name.split(' ')[0]})</div>
+                                </label>
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="startPlayer" class="peer sr-only" onchange="setPlayer(2)" ${p2Checked}>
+                                    <div class="w-full text-center py-1 rounded bg-slate-950 border border-slate-700 peer-checked:bg-emerald-600 peer-checked:border-emerald-500 peer-checked:text-white text-slate-300 text-xs sm:text-sm font-bold transition-all hover:bg-slate-900 truncate px-1">P2 (${gameState.p2Name.split(' ')[0]})</div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2.5 py-1.5 rounded cursor-pointer hover:bg-slate-900">
+                                <span class="text-slate-200 font-bold uppercase text-xs">Checkouts</span>
+                                <input type="checkbox" id="toggle-checkouts" onchange="updateConfig('showCheckouts', this.checked)" ${checkoutsChecked} class="w-4 h-4 accent-emerald-500 cursor-pointer">
+                            </label>
+                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2.5 py-1.5 rounded cursor-pointer hover:bg-slate-900">
+                                <span class="text-slate-200 font-bold uppercase text-xs">Averages</span>
+                                <input type="checkbox" id="toggle-averages" onchange="updateConfig('showAverage', this.checked)" ${averagesChecked} class="w-4 h-4 accent-emerald-500 cursor-pointer">
+                            </label>
+                        </div>
+
+                        <div class="bg-slate-950 border border-slate-700 px-3 py-1.5 rounded flex justify-between items-center text-xs font-mono">
+                            <div class="text-slate-300 font-bold text-xs">P1 AVG: <span class="text-emerald-400 font-extrabold text-sm">${p1Avg}</span></div>
+                            <div class="text-slate-300 font-bold text-xs">P2 AVG: <span class="text-emerald-400 font-extrabold text-xs sm:text-sm">${p2Avg}</span></div>
+                        </div>
+                    </div>
+                `;
+            } else if (config.activeQuickTab === 'style') {
+                const chromaButtons = chromaColors.map(c => 
+                    `<button onclick="setChroma('${c}')" class="w-8 h-8 rounded border border-white/20 shadow-sm hover:scale-110 transition-transform flex-none" style="background-color: ${c}"></button>`
+                ).join('');
+
+                tabContent = `
+                    <div class="flex flex-col justify-between h-full py-1">
+                        <div class="flex gap-1">
+                            <div class="flex-[2] bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col justify-between">
+                                <label class="text-xs font-bold text-slate-300 uppercase mb-0.5 text-center w-full block">Chroma Key</label>
+                                <div class="flex gap-1 justify-center items-center">
+                                    ${chromaButtons}
+                                    <div class="relative w-8 h-8 rounded border border-white/20 bg-slate-800 flex items-center justify-center text-slate-400 hover:text-white overflow-hidden shadow-sm hover:scale-110 transition-transform flex-none ml-2">
+                                        <i data-lucide="palette" class="w-4 h-4"></i>
+                                        <input id="chroma-picker-input" type="color" oninput="setChroma(this.value)" value="${config.chromaColor}" class="absolute inset-0 opacity-0 w-full h-full cursor-pointer">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex-1 bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col items-center justify-between">
+                                <span class="text-xs font-bold text-slate-300 uppercase mb-1 text-center leading-tight">Active</span>
+                                <input type="color" oninput="updateConfig('color-indicator', this.value)" value="${config.colors.indicator}" class="w-full h-8 rounded cursor-pointer border border-white/10">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-1 my-1">
+                            <div class="bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col items-center">
+                                <span class="text-xs font-bold text-slate-300 uppercase mb-1">Header</span>
+                                <div class="flex gap-1">
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">BG</span>
+                                        <input type="color" oninput="updateConfig('color-headerBg', this.value)" value="${config.colors.headerBg}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">TXT</span>
+                                        <input type="color" oninput="updateConfig('color-headerText', this.value)" value="${config.colors.headerText}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col items-center">
+                                <span class="text-xs font-bold text-slate-300 uppercase mb-1">Player</span>
+                                <div class="flex gap-1">
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">BG</span>
+                                        <input type="color" oninput="updateConfig('color-playerBg', this.value)" value="${config.colors.playerBg}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">TXT</span>
+                                        <input type="color" oninput="updateConfig('color-playerText', this.value)" value="${config.colors.playerText}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col items-center">
+                                <span class="text-xs font-bold text-slate-300 uppercase mb-1">Score</span>
+                                <div class="flex gap-1">
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">BG</span>
+                                        <input type="color" oninput="updateConfig('color-scoreBg', this.value)" value="${config.colors.scoreBg}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">TXT</span>
+                                        <input type="color" oninput="updateConfig('color-scoreText', this.value)" value="${config.colors.scoreText}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-1 mt-auto">
+                            <button onclick="triggerImport()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] uppercase font-bold py-2 rounded border border-slate-600 flex items-center justify-center gap-1 transition-colors h-9">
+                                <i data-lucide="upload" class="w-4 h-4"></i> Import
+                            </button>
+                            <button onclick="exportColors()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] uppercase font-bold py-2 rounded border border-slate-600 flex items-center justify-center gap-1 transition-colors h-9">
+                                <i data-lucide="download" class="w-4 h-4"></i> Export
+                            </button>
+                            <input type="file" id="import-file" accept=".json" class="hidden" onchange="importColors(this)">
+                        </div>
+                    </div>
+                `;
+            } else {
+                const queueList = matchQueue.length === 0 
+                    ? '<div class="text-slate-500 text-[10px] text-center py-6 font-bold uppercase tracking-widest">Queue Empty</div>' 
+                    : matchQueue.map((m, i) => `
+                        <div class="bg-slate-800/80 p-2 rounded flex justify-between items-center border border-slate-700/50 shadow-sm">
+                            <div class="text-xs text-slate-200 truncate max-w-[140px] leading-tight font-bold">
+                                <span class="text-slate-400 font-normal text-[10px] uppercase">P1:</span> ${m.p1}<br>
+                                <span class="text-slate-400 font-normal text-[10px] uppercase">P2:</span> ${m.p2}
+                            </div>
+                            <div class="flex gap-1">
+                                <button onclick="loadFromQueue(${i})" class="bg-emerald-600/80 hover:bg-emerald-500 text-white px-2 py-1.5 rounded transition-colors text-[10px] font-bold uppercase flex items-center gap-1 shadow-md shadow-black/20" title="Load Match">
+                                    <i data-lucide="play" class="w-3 h-3"></i> Load
+                                </button>
+                                <button onclick="removeFromQueue(${i})" class="bg-red-900/60 hover:bg-red-700 text-white p-1.5 rounded transition-colors flex items-center justify-center shadow-md shadow-black/20" title="Remove">
+                                    <i data-lucide="trash-2" class="w-3 h-3"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+
+                tabContent = `
+                    <div class="flex flex-col h-full py-1">
+                        <div class="flex gap-1 mb-2">
+                            <input type="text" id="queue-p1" placeholder="P1 Name" onkeydown="if(event.key==='Enter') addMatchToQueue()" class="w-1/2 ${inputBg} rounded p-1.5 text-white text-xs outline-none focus:border-emerald-500 border shadow-inner">
+                            <input type="text" id="queue-p2" placeholder="P2 Name" onkeydown="if(event.key==='Enter') addMatchToQueue()" class="w-1/2 ${inputBg} rounded p-1.5 text-white text-xs outline-none focus:border-emerald-500 border shadow-inner">
+                            <button onclick="addMatchToQueue()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded px-3 font-bold transition-colors flex items-center justify-center shadow-lg shadow-emerald-900/20">
+                                <i data-lucide="plus" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                        <div class="flex-1 overflow-y-auto no-scrollbar bg-slate-900/40 rounded border border-white/5 p-1 flex flex-col gap-1 min-h-[120px]">
+                            ${queueList}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            return `
+                <div class="flex flex-col md:flex-row gap-4 items-end md:items-stretch h-auto md:h-80">
+                    <div class="w-full md:w-1/4 rounded-xl p-4 flex flex-col justify-between border ${bgClass}">
+                        <div class="text-slate-300 text-sm md:text-base uppercase tracking-widest font-bold mb-2">Throw</div>
+                        <div class="text-5xl md:text-6xl font-mono font-bold text-right tracking-widest border-b-2 border-slate-700 pb-2 ${bufferDisplayClass}">
+                            ${bufferText}
+                        </div>
+                        <div class="flex gap-2 mt-4">
+                            <button onclick="handleUndo()" ${undoDisabled} class="flex-1 flex items-center justify-center gap-2 ${btnBg} disabled:opacity-50 rounded-lg py-3 transition-colors text-slate-200 font-bold">
+                                <i data-lucide="rotate-ccw" class="w-5 h-5"></i>
+                            </button>
+                            <button onclick="clearInput()" ${clearDisabled} class="flex-1 flex items-center justify-center gap-2 ${btnBg} disabled:opacity-50 rounded-lg py-3 transition-colors text-red-300 font-bold">
+                                <i data-lucide="eraser" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="w-full md:w-1/3 rounded-xl p-2 md:p-3 grid grid-cols-3 gap-2 border shadow-xl ${bgClass}">
+                        ${numButtons}
+                        <button onclick="handleNumClick('0')" class="${btnBg} text-white text-2xl md:text-3xl font-bold rounded-lg shadow-lg shadow-black/20">0</button>
+                        <button onclick="handleBackspace()" class="${btnBg} text-amber-500 rounded-lg flex items-center justify-center shadow-lg shadow-black/20"><i data-lucide="chevron-left" class="w-6 h-6"></i></button>
+                        <button onclick="handleEnter()" class="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-400 text-white text-xl md:text-2xl font-bold rounded-lg flex items-center justify-center shadow-lg shadow-emerald-900/20 col-span-1">ENT</button>
+                    </div>
+
+                    <div class="w-full md:flex-1 rounded-xl flex flex-col justify-between border ${bgClass} overflow-hidden relative">
+                        <div class="flex items-center border-b border-slate-700/50 text-[10px] sm:text-[11px] md:text-xs font-bold uppercase tracking-wider bg-slate-900">
+                            <button onclick="setQuickTab('match')" class="flex-1 py-3 text-center transition-colors ${matchTabClass}">Match</button>
+                            <button onclick="setQuickTab('style')" class="flex-1 py-3 text-center transition-colors ${styleTabClass}">Style</button>
+                            <button onclick="setQuickTab('queue')" class="flex-1 py-3 text-center transition-colors ${queueTabClass}">Queue</button>
+                        </div>
+
+                        <div class="p-2 flex-1 flex flex-col gap-1 text-xs md:text-sm overflow-hidden">
+                            ${tabContent}
+                        </div>
+
+                        <div class="p-2 pt-0 border-t border-slate-800/50 mt-auto">
+                            <button onclick="resetMatch()" class="w-full bg-red-900/30 hover:bg-red-900/50 text-white border border-red-900/50 rounded py-2.5 font-bold transition-colors flex items-center justify-center gap-2 text-xs uppercase tracking-wider">
+                                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reset Match
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getVisualBracketHTML() {
+            const matches = tournament;
+
+            const rounds = Array.from(new Set(matches.map(m => m.roundTitle)));
+
+            const renderMatchBox = (m) => {
+                const isActive = activeBracketMatchId === m.id;
+                const activeBorder = isActive ? 'border-emerald-500 shadow-emerald-950/80 ring-2 ring-emerald-500/50' : 'border-slate-700/80';
+                const liveBadge = isActive ? `<span class="bg-emerald-500 text-black text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse">Live</span>` : '';
+
+                const advanceP1 = m.nextMatch !== null ? `<button onclick="advanceTournament(${m.id}, 'p1')" title="Advance Player 1" class="bg-slate-800 hover:bg-emerald-600 px-2 text-slate-300 hover:text-white transition-colors flex items-center justify-center border-l border-slate-700 text-xs font-bold"><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></button>` : '';
+                const advanceP2 = m.nextMatch !== null ? `<button onclick="advanceTournament(${m.id}, 'p2')" title="Advance Player 2" class="bg-slate-800 hover:bg-emerald-600 px-2 text-slate-300 hover:text-white transition-colors flex items-center justify-center border-l border-slate-700 text-xs font-bold"><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></button>` : '';
+
+                const p1WinnerBadge = m.winner === 1 ? `<span class="bg-yellow-400 text-black text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider mr-1 shadow-sm">Winner</span>` : '';
+                const p2WinnerBadge = m.winner === 2 ? `<span class="bg-yellow-400 text-black text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider mr-1 shadow-sm">Winner</span>` : '';
+
+                return `
+                    <div class="bg-slate-950 border ${activeBorder} rounded-xl overflow-hidden shadow-xl flex flex-col w-full my-3.5 transition-all">
+                        <div class="bg-slate-900 px-3 py-1.5 flex justify-between items-center border-b border-slate-800">
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-[10px] text-emerald-400 font-black uppercase tracking-wider">${m.round}</span>
+                                ${liveBadge}
+                            </div>
+                            <button onclick="loadTournamentMatch(${m.id})" class="text-[10px] bg-emerald-600 hover:bg-emerald-500 px-2 py-0.5 rounded text-white font-bold transition-colors flex items-center gap-1 shadow-md shadow-emerald-900/30">
+                                <i data-lucide="play" class="w-3 h-3"></i> Load
+                            </button>
+                        </div>
+                        <div class="flex flex-col divide-y divide-slate-800/80">
+                            <div class="flex items-center bg-slate-950/60">
+                                <input type="text" class="w-full bg-transparent text-xs text-white px-3 py-2 outline-none placeholder:text-slate-600 font-medium" placeholder="Player 1" value="${m.p1}" oninput="updateTournament(${m.id}, 'p1', this.value)">
+                                ${p1WinnerBadge}
+                                <input type="text" class="w-10 bg-slate-900/80 text-emerald-400 text-center font-mono font-bold text-xs py-1 border-l border-slate-800 outline-none" placeholder="0" value="${m.p1Score !== undefined ? m.p1Score : ''}" oninput="updateTournamentScore(${m.id}, 'p1Score', this.value)">
+                                ${advanceP1}
+                            </div>
+                            <div class="flex items-center bg-slate-950/60">
+                                <input type="text" class="w-full bg-transparent text-xs text-white px-3 py-2 outline-none placeholder:text-slate-600 font-medium" placeholder="Player 2" value="${m.p2}" oninput="updateTournament(${m.id}, 'p2', this.value)">
+                                ${p2WinnerBadge}
+                                <input type="text" class="w-10 bg-slate-900/80 text-emerald-400 text-center font-mono font-bold text-xs py-1 border-l border-slate-800 outline-none" placeholder="0" value="${m.p2Score !== undefined ? m.p2Score : ''}" oninput="updateTournamentScore(${m.id}, 'p2Score', this.value)">
+                                ${advanceP2}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            };
+
+            let minGridWidth = 850;
+            let colGap = "gap-6";
+            if (tournamentSize === 16) {
+                minGridWidth = 1150;
+                colGap = "gap-8";
+            } else if (tournamentSize === 32) {
+                minGridWidth = 1550;
+                colGap = "gap-10";
+            }
+
+            const columnsHtml = rounds.map(rTitle => {
+                const roundMatchList = matches.filter(m => m.roundTitle === rTitle);
+                const boxesHtml = roundMatchList.map(m => renderMatchBox(m)).join('');
+
+                return `
+                    <div class="flex flex-col justify-around h-full min-w-[220px] max-w-[270px]">
+                        <div class="text-xs font-bold text-slate-400 uppercase tracking-widest text-center mb-2 flex items-center justify-center gap-1.5 bg-slate-950/80 py-1.5 rounded-lg border border-slate-800/80">
+                            <i data-lucide="layers" class="w-3.5 h-3.5 text-emerald-500"></i> ${rTitle}
+                        </div>
+                        <div class="flex flex-col justify-around flex-grow">
+                            ${boxesHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="overflow-x-auto custom-scrollbar pb-4 pt-1">
+                    <div class="grid grid-flow-col auto-cols-fr ${colGap} items-center" style="min-width: ${minGridWidth}px;">
+                        ${columnsHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        function getBracketSettingsHTML() {
+            const allRounds = [
+                { key: 'r32', title: 'Round of 32', maxCount: 32 },
+                { key: 'r16', title: 'Round of 16', maxCount: 16 },
+                { key: 'quarter', title: 'Quarter Finals', maxCount: 8 },
+                { key: 'semi', title: 'Semi Finals', maxCount: 4 },
+                { key: 'final', title: 'Championship Final', maxCount: 2 }
+            ];
+
+            const activeRounds = allRounds.filter(r => r.maxCount <= tournamentSize);
+
+            const cards = activeRounds.map(r => {
+                const s = roundSettings[r.key] || { startingScore: 501, legs: 3, sets: 1 };
+                const s301 = s.startingScore === 301 ? 'selected' : '';
+                const s501 = s.startingScore === 501 ? 'selected' : '';
+                const s701 = s.startingScore === 701 ? 'selected' : '';
+
+                return `
+                    <div class="bg-slate-950 border border-slate-800 rounded-xl p-5 flex flex-col gap-4 shadow-lg">
+                        <div class="flex items-center gap-2 border-b border-slate-800 pb-3">
+                            <div class="w-2.5 h-2.5 rounded-full bg-emerald-500"></div>
+                            <h3 class="text-sm font-bold text-white uppercase tracking-wider">${r.title}</h3>
+                        </div>
+
+                        <div class="flex flex-col gap-3">
+                            <div>
+                                <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Starting Score</label>
+                                <select onchange="updateRoundSetting('${r.key}', 'startingScore', this.value)" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-bold outline-none focus:border-emerald-500">
+                                    <option value="301" ${s301}>301</option>
+                                    <option value="501" ${s501}>501</option>
+                                    <option value="701" ${s701}>701</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Legs per Set</label>
+                                    <input type="number" min="1" max="9" value="${s.legs}" onchange="updateRoundSetting('${r.key}', 'legs', this.value)" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-bold outline-none focus:border-emerald-500">
+                                </div>
+                                <div>
+                                    <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Sets to Win</label>
+                                    <input type="number" min="1" max="5" value="${s.sets}" onchange="updateRoundSetting('${r.key}', 'sets', this.value)" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-bold outline-none focus:border-emerald-500">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="flex flex-col gap-6">
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        Configure custom match rules (starting score, legs, and sets) for each stage of the tournament bracket. When you click <span class="text-emerald-400 font-bold">Load</span> on any match, these specific rules will be applied automatically.
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                        ${cards}
+                    </div>
+                </div>
+            `;
+        }
+
+        function handleNumClick(num) {
+            if (gameState.matchWinner) return;
+            if (inputBuffer.length >= 3) return;
+            
+            const newVal = parseInt(inputBuffer + num);
+            if (newVal > 180) return;
+            
+            inputBuffer += num;
+            render();
+            syncToRemote();
+        }
+
+        function handleBackspace() {
+            inputBuffer = inputBuffer.slice(0, -1);
+            render();
+            syncToRemote();
+        }
+
+        function clearInput() {
+            inputBuffer = "";
+            render();
+            syncToRemote();
+        }
+
+        function handleEnter() {
+            if (!inputBuffer) return;
+            const scoreThrown = parseInt(inputBuffer);
+            if (isNaN(scoreThrown)) return;
+            if (scoreThrown > 180) {
+                toggleAlert(true, "Score cannot exceed 180");
+                inputBuffer = "";
+                render();
+                syncToRemote();
+                return;
+            }
+
+            undoStack.push(JSON.parse(JSON.stringify(gameState)));
+            
+            const isP1 = gameState.currentPlayer === 1;
+            const currentScore = isP1 ? gameState.p1Score : gameState.p2Score;
+            const newScore = currentScore - scoreThrown;
+
+            gameState.bust = false;
+            gameState.lastTurnScore = scoreThrown;
+
+            // Track darts thrown (3 per visit)
+            if (isP1) {
+                gameState.p1DartsThrown += 3;
+            } else {
+                gameState.p2DartsThrown += 3;
+            }
+
+            if (newScore < 0 || newScore === 1) {
+                // Bust
+                gameState.bust = true;
+                gameState.currentPlayer = isP1 ? 2 : 1;
+            } else if (newScore === 0) {
+                // Leg Won!
+                if (isP1) {
+                    gameState.p1TotalScored += currentScore;
+                    gameState.p1Legs++;
+                } else {
+                    gameState.p2TotalScored += currentScore;
+                    gameState.p2Legs++;
+                }
+                
+                gameState.p1Score = config.startingScore;
+                gameState.p2Score = config.startingScore;
+
+                if (isP1 && gameState.p1Legs >= config.legsPerSet) {
+                    gameState.p1Sets++;
+                    gameState.p1Legs = 0;
+                    gameState.p2Legs = 0;
+                } else if (!isP1 && gameState.p2Legs >= config.legsPerSet) {
+                    gameState.p2Sets++;
+                    gameState.p1Legs = 0;
+                    gameState.p2Legs = 0;
+                }
+
+                if (gameState.p1Sets >= config.setsToWin) {
+                    gameState.matchWinner = 1;
+                } else if (gameState.p2Sets >= config.setsToWin) {
+                    gameState.matchWinner = 2;
+                } else {
+                    gameState.startingPlayer = gameState.startingPlayer === 1 ? 2 : 1;
+                    gameState.currentPlayer = gameState.startingPlayer;
+                }
+            } else {
+                // Standard score subtracted
+                if (isP1) {
+                    gameState.p1TotalScored += scoreThrown;
+                    gameState.p1Score = newScore;
+                } else {
+                    gameState.p2TotalScored += scoreThrown;
+                    gameState.p2Score = newScore;
+                }
+                gameState.currentPlayer = isP1 ? 2 : 1;
+            }
+
+            syncActiveMatchToBracket();
+            inputBuffer = "";
+            render();
+            syncToRemote();
+        }
+
+        function handleUndo() {
+            if (undoStack.length === 0) return;
+            gameState = undoStack.pop();
+            syncActiveMatchToBracket();
+            render();
+            syncToRemote();
+        }
+
+        function resetMatch() { toggleConfirm(true); }
+
+        function executeReset() {
+            toggleConfirm(false);
+            toggleSettings(false);
+            gameState = {
+                p1Name: gameState.p1Name,
+                p2Name: gameState.p2Name,
+                p1Score: config.startingScore,
+                p2Score: config.startingScore,
+                p1Legs: 0, 
+                p2Legs: 0, 
+                p1Sets: 0, 
+                p2Sets: 0,
+                p1TotalScored: 0,
+                p1DartsThrown: 0,
+                p2TotalScored: 0,
+                p2DartsThrown: 0,
+                startingPlayer: gameState.startingPlayer,
+                currentPlayer: gameState.startingPlayer,
+                lastTurnScore: null,
+                matchWinner: null,
+                bust: false
+            };
+            undoStack = [];
+            inputBuffer = "";
+            syncActiveMatchToBracket();
+            render();
+            syncToRemote();
+        }
+
+        init();
+
+    </script>
+</body>
+</html>
