@@ -297,11 +297,11 @@
         let roomCode = generateRoomCode();
         let remoteConnected = false;
         let isRemoteMode = false;
-        let isWritingToRemote = false;
         
         let mqttClient = null;
         let myClientId = 'darts_' + Math.random().toString(16).substr(2, 8);
         let mqttTopic = '';
+        let localChannel = null;
 
         let undoStack = [];
         let inputBuffer = "";
@@ -310,6 +310,8 @@
         let activeBracketMatchId = null;
         let tournamentSize = 8;
         let qrCodeInstance = null;
+        let remoteLoadModalOpen = false;
+        let remoteLoadTab = 'queue';
 
         let roundSettings = {
             r32: { startingScore: 501, legs: 3, sets: 1 },
@@ -406,71 +408,126 @@
 
         function listenToRemoteRoom() {
             if (mqttClient) {
-                mqttClient.end();
+                try { mqttClient.end(); } catch(e){}
+                mqttClient = null;
             }
 
             remoteConnected = false;
             mqttTopic = 'neon-darts-sync/room/' + roomCode;
             
-            // Connect to HiveMQ public broker using WebSockets
-            mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+            // Setup local BroadcastChannel listener for multi-tab/popout sync
+            listenToLocalBroadcast();
 
-            mqttClient.on('connect', () => {
-                mqttClient.subscribe(mqttTopic);
-                remoteConnected = true;
-                render();
-                
-                // If we are the host, push our current state immediately
-                if (!isRemoteMode) {
-                    syncToRemote();
+            try {
+                // Connect to HiveMQ public broker using WebSockets if permitted by environment
+                if (typeof mqtt !== 'undefined' && mqtt.connect) {
+                    mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+                        connectTimeout: 5000,
+                        reconnectPeriod: 10000
+                    });
+
+                    mqttClient.on('connect', () => {
+                        remoteConnected = true;
+                        render();
+                        
+                        if (!isRemoteMode) {
+                            syncToRemote();
+                        }
+                    });
+
+                    mqttClient.on('message', (topic, message) => {
+                        if (topic === mqttTopic) {
+                            try {
+                                const data = JSON.parse(message.toString());
+                                if (data.sender === myClientId) return;
+
+                                if (data.gameState) gameState = data.gameState;
+                                if (data.config) config = data.config;
+                                if (data.inputBuffer !== undefined) inputBuffer = data.inputBuffer;
+                                if (data.tournament) tournament = data.tournament;
+                                if (data.activeBracketMatchId !== undefined) activeBracketMatchId = data.activeBracketMatchId;
+                                if (data.tournamentSize) tournamentSize = data.tournamentSize;
+                                if (data.roundSettings) roundSettings = data.roundSettings;
+                                if (data.matchQueue) matchQueue = data.matchQueue;
+                                render();
+                            } catch(e) {
+                                console.error("MQTT parse error", e);
+                            }
+                        }
+                    });
+
+                    mqttClient.on('error', (err) => {
+                        console.warn("MQTT WebSockets restricted or failed:", err);
+                        remoteConnected = false;
+                        render();
+                    });
+                    
+                    mqttClient.on('close', () => {
+                        remoteConnected = false;
+                        render();
+                    });
                 }
-            });
+            } catch(err) {
+                console.warn("WebSocket connections restricted in this environment:", err);
+                remoteConnected = false;
+            }
+        }
 
-            mqttClient.on('message', (topic, message) => {
-                if (topic === mqttTopic) {
-                    try {
-                        const data = JSON.parse(message.toString());
-                        if (data.sender === myClientId) return; // Ignore our own echo
+        function listenToLocalBroadcast() {
+            if (localChannel) {
+                try { localChannel.close(); } catch(e){}
+            }
+            if (window.BroadcastChannel) {
+                try {
+                    localChannel = new BroadcastChannel('darts_local_sync_' + roomCode);
+                    localChannel.onmessage = (event) => {
+                        const data = event.data;
+                        if (!data || data.sender === myClientId) return;
 
                         if (data.gameState) gameState = data.gameState;
                         if (data.config) config = data.config;
                         if (data.inputBuffer !== undefined) inputBuffer = data.inputBuffer;
+                        if (data.tournament) tournament = data.tournament;
+                        if (data.activeBracketMatchId !== undefined) activeBracketMatchId = data.activeBracketMatchId;
+                        if (data.tournamentSize) tournamentSize = data.tournamentSize;
+                        if (data.roundSettings) roundSettings = data.roundSettings;
+                        if (data.matchQueue) matchQueue = data.matchQueue;
                         render();
-                    } catch(e) {
-                        console.error("MQTT parse error", e);
-                    }
-                }
-            });
-
-            mqttClient.on('error', (err) => {
-                console.error("MQTT Error:", err);
-                remoteConnected = false;
-                render();
-            });
-            
-            mqttClient.on('close', () => {
-                remoteConnected = false;
-                render();
-            });
+                    };
+                } catch(e) {}
+            }
         }
 
         function syncToRemote() {
+            const syncPayload = {
+                sender: myClientId,
+                gameState,
+                config,
+                inputBuffer,
+                tournament,
+                activeBracketMatchId,
+                tournamentSize,
+                roundSettings,
+                matchQueue,
+                lastUpdated: Date.now()
+            };
+
             if (mqttClient && mqttClient.connected) {
-                const payload = JSON.stringify({
-                    sender: myClientId,
-                    gameState,
-                    config,
-                    inputBuffer,
-                    lastUpdated: Date.now()
-                });
-                
-                // Retain flag ensures a newly connected phone gets the latest state instantly
-                mqttClient.publish(mqttTopic, payload, { retain: true });
+                try {
+                    mqttClient.publish(mqttTopic, JSON.stringify(syncPayload), { retain: true });
+                } catch(e) {
+                    console.warn("MQTT publish failed:", e);
+                }
+            }
+
+            if (localChannel) {
+                try {
+                    localChannel.postMessage(syncPayload);
+                } catch(e) {}
             }
         }
 
         function init() {
-            // Check URL params for room code and mode
             const urlParams = new URLSearchParams(window.location.search);
             const paramRoom = urlParams.get('room');
             const paramMode = urlParams.get('mode');
@@ -494,21 +551,6 @@
             setupKeyboard();
             setChroma(config.chromaColor);
             updateConfig('color-indicator', config.colors.indicator);
-            
-            // Auto open popout if not in remote controller mode
-            if (!isRemoteMode) {
-                openPopout();
-
-                const autoPopoutFallback = () => {
-                    if (!popupWindow || popupWindow.closed) {
-                        openPopout();
-                    }
-                    window.removeEventListener('click', autoPopoutFallback);
-                    window.removeEventListener('keydown', autoPopoutFallback);
-                };
-                window.addEventListener('click', autoPopoutFallback);
-                window.addEventListener('keydown', autoPopoutFallback);
-            }
 
             listenToRemoteRoom();
             render();
@@ -689,13 +731,14 @@
         function updateConfig(key, value) {
             if (key === 'startingScore' || key === 'legsPerSet' || key === 'setsToWin') {
                 config[key] = parseInt(value);
+                syncActiveMatchToBracket();
                 render();
             } else if (key === 'showCheckouts' || key === 'showAverage') {
                 config[key] = value;
                 render();
             } else if (key === 'customHostUrl') {
                 config[key] = value.trim();
-                localStorage.setItem('dartsCustomHost', config[key]); // Persistent storage for specific display unit
+                localStorage.setItem('dartsCustomHost', config[key]);
             } else if (key.startsWith('color-')) {
                 const colorKey = key.replace('color-', '');
                 config.colors[colorKey] = value;
@@ -741,10 +784,7 @@
             if (playerNum === 1) gameState.p1Name = val;
             else gameState.p2Name = val;
             
-            if (activeBracketMatchId !== null && tournament[activeBracketMatchId]) {
-                if (playerNum === 1) tournament[activeBracketMatchId].p1 = val;
-                else tournament[activeBracketMatchId].p2 = val;
-            }
+            syncActiveMatchToBracket();
             render();
             syncToRemote();
         }
@@ -768,6 +808,7 @@
 
         function updateRoundSetting(roundKey, field, value) {
             roundSettings[roundKey][field] = parseInt(value);
+            syncToRemote();
         }
 
         function addMatchToQueue() {
@@ -792,6 +833,7 @@
             gameState.p2Name = match.p2;
             matchQueue.splice(index, 1);
             activeBracketMatchId = null;
+            remoteLoadModalOpen = false;
             executeReset();
         }
 
@@ -801,11 +843,22 @@
                 if (slot === 'p1') gameState.p1Name = value;
                 if (slot === 'p2') gameState.p2Name = value;
             }
+            render();
             syncToRemote();
         }
 
         function updateTournamentScore(matchId, slot, value) {
             tournament[matchId][slot] = value;
+            if (activeBracketMatchId === matchId) {
+                const val = parseInt(value) || 0;
+                if (config.setsToWin > 1) {
+                    if (slot === 'p1Score') gameState.p1Sets = val;
+                    if (slot === 'p2Score') gameState.p2Sets = val;
+                } else {
+                    if (slot === 'p1Score') gameState.p1Legs = val;
+                    if (slot === 'p2Score') gameState.p2Legs = val;
+                }
+            }
             render();
             syncToRemote();
         }
@@ -821,8 +874,38 @@
             if (match.nextMatch !== null) {
                 tournament[match.nextMatch][match.nextSlot] = winnerName;
             }
+            if (activeBracketMatchId === matchId) {
+                gameState.matchWinner = match.winner;
+            }
             render();
             syncToRemote();
+        }
+
+        function syncActiveMatchToBracket() {
+            if (activeBracketMatchId === null || !tournament[activeBracketMatchId]) return;
+
+            const match = tournament[activeBracketMatchId];
+            
+            match.p1 = gameState.p1Name;
+            match.p2 = gameState.p2Name;
+
+            if (config.setsToWin > 1) {
+                match.p1Score = gameState.p1Sets;
+                match.p2Score = gameState.p2Sets;
+            } else {
+                match.p1Score = gameState.p1Legs;
+                match.p2Score = gameState.p2Legs;
+            }
+
+            if (gameState.matchWinner) {
+                match.winner = gameState.matchWinner;
+                const winnerName = gameState.matchWinner === 1 ? match.p1 : match.p2;
+                if (match.nextMatch !== null && winnerName.trim()) {
+                    tournament[match.nextMatch][match.nextSlot] = winnerName;
+                }
+            } else {
+                match.winner = null;
+            }
         }
 
         function loadTournamentMatch(matchId) {
@@ -846,29 +929,8 @@
             match.p2Score = "0";
             match.winner = null;
 
+            remoteLoadModalOpen = false;
             executeReset();
-        }
-
-        function syncActiveMatchToBracket() {
-            if (activeBracketMatchId === null || !tournament[activeBracketMatchId]) return;
-
-            const match = tournament[activeBracketMatchId];
-            
-            if (config.setsToWin > 1) {
-                match.p1Score = gameState.p1Sets;
-                match.p2Score = gameState.p2Sets;
-            } else {
-                match.p1Score = gameState.p1Legs;
-                match.p2Score = gameState.p2Legs;
-            }
-
-            if (gameState.matchWinner) {
-                match.winner = gameState.matchWinner;
-                const winnerName = gameState.matchWinner === 1 ? match.p1 : match.p2;
-                if (match.nextMatch !== null && winnerName.trim()) {
-                    tournament[match.nextMatch][match.nextSlot] = winnerName;
-                }
-            }
         }
 
         function clearBracket() {
@@ -1036,12 +1098,10 @@
             
             roomCode = newCode;
             
-            // Update URL to reflect the new room for easy bookmarking/sharing
             const url = new URL(window.location);
             url.searchParams.set('room', roomCode);
             window.history.replaceState({}, '', url);
 
-            // Re-establish connection
             remoteConnected = false;
             listenToRemoteRoom();
             
@@ -1296,9 +1356,97 @@
 
             const bufferDisplayClass = inputBuffer ? 'text-white' : 'text-slate-500';
 
+            let remoteModalHtml = '';
+            if (remoteLoadModalOpen) {
+                const queueTabActive = remoteLoadTab === 'queue';
+                const queueBtnClass = queueTabActive ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300';
+                const bracketBtnClass = !queueTabActive ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300';
+
+                let listContent = '';
+
+                if (queueTabActive) {
+                    if (matchQueue.length === 0) {
+                        listContent = `<div class="text-slate-500 text-xs text-center py-8 font-bold uppercase tracking-wider">No matches in queue</div>`;
+                    } else {
+                        listContent = matchQueue.map((m, idx) => `
+                            <div class="bg-slate-950 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
+                                <div class="text-xs text-white font-bold">
+                                    <div class="text-emerald-400 font-mono text-[10px] uppercase">Match #${idx + 1}</div>
+                                    <span class="text-slate-300">${m.p1}</span> <span class="text-slate-500">vs</span> <span class="text-slate-300">${m.p2}</span>
+                                </div>
+                                <button onclick="loadFromQueue(${idx})" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1 shadow-md">
+                                    <i data-lucide="play" class="w-3.5 h-3.5"></i> Load
+                                </button>
+                            </div>
+                        `).join('');
+                    }
+                } else {
+                    const playableMatches = tournament.filter(m => m.p1.trim() && m.p2.trim());
+                    if (playableMatches.length === 0) {
+                        listContent = `<div class="text-slate-500 text-xs text-center py-8 font-bold uppercase tracking-wider">No tournament matches ready to play yet</div>`;
+                    } else {
+                        listContent = playableMatches.map(m => {
+                            const isLive = activeBracketMatchId === m.id;
+                            const isDone = m.winner !== null;
+                            let statusBadge = '';
+                            if (isLive) statusBadge = `<span class="bg-emerald-500 text-black text-[9px] font-black px-1.5 py-0.5 rounded uppercase">Live</span>`;
+                            else if (isDone) statusBadge = `<span class="bg-slate-700 text-slate-300 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase">Finished</span>`;
+
+                            return `
+                                <div class="bg-slate-950 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
+                                    <div class="text-xs text-white font-bold">
+                                        <div class="flex items-center gap-1.5 mb-1">
+                                            <span class="text-emerald-400 font-mono text-[10px] uppercase">${m.round}</span>
+                                            ${statusBadge}
+                                        </div>
+                                        <span class="${m.winner === 1 ? 'text-yellow-400' : 'text-slate-300'}">${m.p1}</span>
+                                        <span class="text-slate-500">vs</span>
+                                        <span class="${m.winner === 2 ? 'text-yellow-400' : 'text-slate-300'}">${m.p2}</span>
+                                    </div>
+                                    <button onclick="loadTournamentMatch(${m.id})" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1 shadow-md">
+                                        <i data-lucide="play" class="w-3.5 h-3.5"></i> ${isLive ? 'Reload' : 'Load'}
+                                    </button>
+                                </div>
+                            `;
+                        }).join('');
+                    }
+                }
+
+                remoteModalHtml = `
+                    <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-4 flex flex-col max-h-[85vh] shadow-2xl">
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+                                <h3 class="text-base font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                                    <i data-lucide="list-video" class="w-5 h-5 text-emerald-400"></i> Load Next Match
+                                </h3>
+                                <button onclick="remoteLoadModalOpen = false; render();" class="text-slate-400 hover:text-white p-1">
+                                    <i data-lucide="x" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2 mb-3">
+                                <button onclick="remoteLoadTab='queue'; render();" class="py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${queueBtnClass}">
+                                    Queue (${matchQueue.length})
+                                </button>
+                                <button onclick="remoteLoadTab='bracket'; render();" class="py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${bracketBtnClass}">
+                                    Bracket (${tournament.filter(m => m.p1.trim() && m.p2.trim()).length})
+                                </button>
+                            </div>
+
+                            <div class="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 my-1 pr-1">
+                                ${listContent}
+                            </div>
+
+                            <button onclick="remoteLoadModalOpen = false; render();" class="mt-3 w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase tracking-wider rounded-xl">
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+
             const html = `
                 <div class="max-w-md mx-auto w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col p-4 gap-4">
-                    <!-- Room & Header info with Custom Room Code Confirm Button -->
                     <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-b border-slate-800 pb-3 gap-2">
                         <div class="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 shadow-inner flex-1">
                             <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse flex-none"></span>
@@ -1313,7 +1461,10 @@
                         </button>
                     </div>
 
-                    <!-- Active Player Score Card -->
+                    <button onclick="remoteLoadModalOpen = true; render();" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl border border-indigo-500/50 shadow-lg flex items-center justify-center gap-2 text-xs uppercase tracking-wider transition-colors active:scale-95">
+                        <i data-lucide="list-video" class="w-4 h-4"></i> Load Next Match (Queue / Bracket)
+                    </button>
+
                     <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 text-center relative overflow-hidden shadow-inner">
                         <div class="text-xs text-slate-400 uppercase font-bold tracking-widest mb-1">Current Turn</div>
                         <div class="text-2xl font-black text-white truncate px-2 mb-1">${activePlayerName}</div>
@@ -1321,18 +1472,15 @@
                         ${activeCheck ? `<div class="mt-2 text-xs font-mono font-bold text-yellow-400 bg-yellow-950/40 border border-yellow-500/30 rounded-lg py-1 px-2">Checkout: ${activeCheck}</div>` : ''}
                     </div>
 
-                    <!-- Input Buffer Bar -->
                     <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
                         <span class="text-xs text-slate-400 uppercase font-bold">Entered:</span>
                         <div class="text-3xl font-mono font-bold tracking-widest ${bufferDisplayClass}">${inputBuffer || '0'}</div>
                     </div>
 
-                    <!-- Quick Preset Buttons -->
                     <div class="grid grid-cols-4 gap-1.5">
                         ${quickButtons}
                     </div>
 
-                    <!-- Keypad grid -->
                     <div class="grid grid-cols-3 gap-2">
                         ${numButtons}
                         <button onclick="clearInput()" class="bg-slate-800 text-red-400 font-bold text-sm py-3 rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="eraser" class="w-5 h-5"></i></button>
@@ -1340,7 +1488,6 @@
                         <button onclick="handleBackspace()" class="bg-slate-800 text-amber-400 font-bold text-sm py-3 rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="chevron-left" class="w-6 h-6"></i></button>
                     </div>
 
-                    <!-- Action Controls -->
                     <div class="grid grid-cols-2 gap-2 mt-1">
                         <button onclick="handleUndo()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl font-bold uppercase text-xs flex items-center justify-center gap-2 border border-slate-700">
                             <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Undo
@@ -1350,6 +1497,8 @@
                         </button>
                     </div>
                 </div>
+
+                ${remoteModalHtml}
             `;
             els.mainContent.innerHTML = html;
         }
@@ -1853,7 +2002,6 @@
             gameState.bust = false;
             gameState.lastTurnScore = scoreThrown;
 
-            // Track darts thrown (3 per visit)
             if (isP1) {
                 gameState.p1DartsThrown += 3;
             } else {
@@ -1861,11 +2009,9 @@
             }
 
             if (newScore < 0 || newScore === 1) {
-                // Bust
                 gameState.bust = true;
                 gameState.currentPlayer = isP1 ? 2 : 1;
             } else if (newScore === 0) {
-                // Leg Won!
                 if (isP1) {
                     gameState.p1TotalScored += currentScore;
                     gameState.p1Legs++;
@@ -1892,7 +2038,6 @@
                     gameState.matchWinner = 2;
                 }
 
-                // Reset legs for next set only if match is NOT won yet
                 if (!gameState.matchWinner && (setWonByP1 || setWonByP2)) {
                     gameState.p1Legs = 0;
                     gameState.p2Legs = 0;
@@ -1903,7 +2048,6 @@
                     gameState.currentPlayer = gameState.startingPlayer;
                 }
             } else {
-                // Standard score subtracted
                 if (isP1) {
                     gameState.p1TotalScored += scoreThrown;
                     gameState.p1Score = newScore;
@@ -1960,7 +2104,6 @@
         }
 
         init();
-
     </script>
 </body>
 </html>
