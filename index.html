@@ -546,6 +546,7 @@
             updateConfig('color-indicator', config.colors.indicator);
 
             listenToRemoteRoom();
+            listenToLocalBroadcast();
             render();
         }
 
@@ -1113,6 +1114,7 @@
 
             remoteConnected = false;
             listenToRemoteRoom();
+            listenToLocalBroadcast();
             
             if (!els.remoteModal.classList.contains('hidden')) {
                 els.modalRoomCode.value = roomCode;
@@ -1286,6 +1288,12 @@
                 const popoutContainer = popupWindow.document.getElementById('popout-container');
                 if (popoutContainer) {
                     popoutContainer.innerHTML = getScoreboardHTML(true);
+                }
+                if (popupWindow.document && popupWindow.document.body) {
+                    popupWindow.document.body.style.backgroundColor = config.chromaColor;
+                }
+                if (popupWindow.lucide) {
+                    try { popupWindow.lucide.createIcons(); } catch(e){}
                 }
             }
         }
