@@ -17,7 +17,7 @@
     <!-- QRCode JS for instant remote mobile pairing -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
-    <!-- MQTT for Public Free Remote Sync (Replaces Firebase) -->
+    <!-- MQTT for Public Free Remote Sync -->
     <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
     <!-- Google Fonts (Inter & Roboto Mono) -->
@@ -108,16 +108,6 @@
 
     <div id="app" class="flex flex-col min-h-screen">
         
-        <!-- Quick View Switcher Floating Bar for Mobile / Phones -->
-        <div class="fixed top-2 right-2 z-40 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-full p-1 shadow-2xl flex items-center gap-1 sm:hidden">
-            <button onclick="toggleRemoteMode(false)" class="px-3 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all ${!isRemoteMode ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}">
-                <i data-lucide="layout-dashboard" class="w-3.5 h-3.5"></i> Host
-            </button>
-            <button onclick="toggleRemoteMode(true)" class="px-3 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all ${isRemoteMode ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}">
-                <i data-lucide="gamepad-2" class="w-3.5 h-3.5"></i> Remote
-            </button>
-        </div>
-
         <!-- Reset Confirmation Modal -->
         <div id="confirm-modal" class="fixed inset-0 z-[60] flex items-end justify-center pb-48 p-4 hidden opacity-0 transition-opacity duration-300">
             <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform scale-95 transition-transform duration-300" id="confirm-panel">
@@ -181,6 +171,12 @@
                     <div class="text-[10px] text-slate-400 mt-1 leading-tight">
                         GitHub Pages works out of the box because it uses secure HTTPS and public WebSocket cloud syncing!
                     </div>
+                </div>
+
+                <!-- File / Localhost Protocol Warning Banner -->
+                <div id="file-protocol-warning" class="hidden w-full mb-3 bg-amber-950/60 border border-amber-500/40 rounded-xl p-2.5 text-left flex items-start gap-2">
+                    <i data-lucide="alert-circle" class="w-4 h-4 text-amber-400 flex-none mt-0.5"></i>
+                    <p id="warning-text" class="text-[11px] text-amber-200 leading-tight"></p>
                 </div>
 
                 <!-- QR Code Container -->
@@ -310,6 +306,7 @@
         let roomCode = generateRoomCode();
         let remoteConnected = false;
         let isRemoteMode = false;
+        let remoteScale = localStorage.getItem('dartsRemoteScale') || 'fit'; // '80', '90', '100', 'fit'
         
         let mqttClient = null;
         let myClientId = 'darts_' + Math.random().toString(16).substr(2, 8);
@@ -347,6 +344,12 @@
             isRemoteMode = enable;
             render();
             syncToRemote();
+        }
+
+        function setRemoteScale(scale) {
+            remoteScale = scale;
+            localStorage.setItem('dartsRemoteScale', scale);
+            render();
         }
 
         function generateTournament(numPlayers) {
@@ -434,7 +437,6 @@
                 remoteConnected = false;
                 mqttTopic = 'neon-darts-sync/room/' + roomCode;
                 
-                // Connect to HiveMQ public broker using WebSockets
                 mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
 
                 mqttClient.on('connect', () => {
@@ -442,7 +444,6 @@
                     remoteConnected = true;
                     render();
                     
-                    // If we are the host, push our current state immediately
                     if (!isRemoteMode) {
                         syncToRemote();
                     }
@@ -1359,7 +1360,7 @@
                         </div>
                     </div>
 
-                    <!-- Remote Score App Button & Mode Switchers -->
+                    <!-- Remote Score App Button & Room Pill with Confirm Button -->
                     <div class="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
                         <div class="bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-xl flex items-center gap-2" title="Edit and set room code">
                             ${remoteStatusDot}
@@ -1370,12 +1371,8 @@
                             </button>
                         </div>
                         
-                        <button onclick="toggleRemoteModal(true)" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors" title="Pair Device with QR Code">
-                            <i data-lucide="qr-code" class="w-4 h-4 text-emerald-400"></i> Pair QR
-                        </button>
-
-                        <button onclick="toggleRemoteMode(true)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-colors shadow-lg shadow-indigo-950/50" title="Switch to Remote Keypad View">
-                            <i data-lucide="gamepad-2" class="w-4 h-4"></i> Remote Mode
+                        <button onclick="toggleRemoteModal(true)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-colors shadow-lg shadow-indigo-950/50">
+                            <i data-lucide="qr-code" class="w-4 h-4"></i> Pair QR / Remote
                         </button>
                         
                         ${actionButton}
@@ -1390,12 +1387,22 @@
             const activeScore = gameState.currentPlayer === 1 ? gameState.p1Score : gameState.p2Score;
             const activeCheck = getCheckout(activeScore);
             
+            const isFitMode = remoteScale === 'fit';
+            const scaleFactor = isFitMode ? 1 : parseFloat(remoteScale) / 100;
+
+            const padPadding = isFitMode ? 'p-2 sm:p-4' : 'p-4';
+            const gapSize = isFitMode ? 'gap-2 sm:gap-3' : 'gap-3.5';
+            const turnPy = isFitMode ? 'py-2 sm:py-3' : 'py-3.5';
+            const scoreTextSize = isFitMode ? 'text-4xl sm:text-5xl' : 'text-5xl';
+            const numPy = isFitMode ? 'py-2 sm:py-3' : 'py-3';
+            const numTextSize = isFitMode ? 'text-xl sm:text-2xl' : 'text-2xl';
+
             const quickButtons = [26, 41, 45, 60, 85, 100, 140, 180].map(val => `
-                <button onclick="inputBuffer='${val}'; handleEnter();" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-mono font-bold text-sm py-2 rounded-lg border border-slate-700/80 shadow-md transition-all active:scale-95">${val}</button>
+                <button onclick="inputBuffer='${val}'; handleEnter();" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-mono font-bold text-xs sm:text-sm py-1.5 sm:py-2 rounded-lg border border-slate-700/80 shadow-md transition-all active:scale-95">${val}</button>
             `).join('');
 
             const numButtons = [1,2,3,4,5,6,7,8,9].map(n => 
-                `<button onclick="handleNumClick('${n}')" class="bg-slate-800 hover:bg-slate-700 text-white text-2xl font-black py-3 rounded-xl border border-slate-700 shadow-md active:scale-95">${n}</button>`
+                `<button onclick="handleNumClick('${n}')" class="bg-slate-800 hover:bg-slate-700 text-white ${numTextSize} font-black ${numPy} rounded-xl border border-slate-700 shadow-md active:scale-95">${n}</button>`
             ).join('');
 
             const bufferDisplayClass = inputBuffer ? 'text-white' : 'text-slate-500';
@@ -1498,68 +1505,99 @@
                 `;
             }
 
+            const scaleBtnClass = (val) => remoteScale === val ? 'bg-emerald-600 text-white font-black' : 'bg-slate-950 text-slate-400 hover:text-white';
+
             const html = `
-                <div class="max-w-md mx-auto w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col p-4 gap-4">
-                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-b border-slate-800 pb-3 gap-2">
-                        <div class="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 shadow-inner flex-1">
-                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse flex-none"></span>
-                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-none">ROOM:</span>
-                            <input type="text" id="remote-pad-room-input" value="${roomCode}" onkeyup="if(event.key==='Enter') joinRoom(this.value)" onfocus="this.select()" class="bg-transparent text-sm font-mono font-black text-emerald-400 outline-none w-full uppercase border-b border-transparent focus:border-emerald-500 transition-colors">
-                            <button onclick="joinRoom(document.getElementById('remote-pad-room-input').value)" class="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1 transition-colors flex-none shadow-md shadow-emerald-950/50" title="Confirm Room Code">
-                                <i data-lucide="check" class="w-3.5 h-3.5"></i> <span class="text-[10px]">Set</span>
+                <div class="w-full flex flex-col items-center justify-center ${isFitMode ? 'max-h-[100dvh] overflow-hidden' : ''}">
+                    
+                    <!-- Viewport & Scale Control Bar -->
+                    <div class="w-full max-w-md mb-2 flex items-center justify-between bg-slate-950/80 border border-slate-800/80 rounded-xl px-2.5 py-1.5 shadow-md">
+                        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                            <i data-lucide="scaling" class="w-3.5 h-3.5 text-emerald-400"></i> Screen Fit:
+                        </span>
+                        <div class="flex items-center gap-1">
+                            <button onclick="setRemoteScale('fit')" class="px-2 py-0.5 rounded text-[10px] font-bold uppercase transition-colors ${scaleBtnClass('fit')}" title="Auto fit height to phone screen">
+                                Fit Screen
+                            </button>
+                            <button onclick="setRemoteScale('80')" class="px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${scaleBtnClass('80')}">
+                                80%
+                            </button>
+                            <button onclick="setRemoteScale('90')" class="px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${scaleBtnClass('90')}">
+                                90%
+                            </button>
+                            <button onclick="setRemoteScale('100')" class="px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${scaleBtnClass('100')}">
+                                100%
                             </button>
                         </div>
-                        <button onclick="toggleRemoteMode(false)" class="text-[10px] uppercase font-bold text-emerald-400 hover:text-white bg-slate-950 hover:bg-slate-800 px-3 py-2 rounded-xl border border-emerald-500/30 transition-colors flex items-center justify-center gap-1.5 flex-none shadow-md" title="Switch back to Host Console">
-                            <i data-lucide="layout-dashboard" class="w-3.5 h-3.5"></i> Switch to Host View
+                    </div>
+
+                    <div class="max-w-md mx-auto w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col ${padPadding} ${gapSize} transition-all duration-300" style="${!isFitMode ? `transform: scale(${scaleFactor}); transform-origin: top center;` : ''}">
+                        <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-b border-slate-800 pb-2.5 gap-2">
+                            <div class="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 shadow-inner flex-1">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse flex-none"></span>
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-none">ROOM:</span>
+                                <input type="text" id="remote-pad-room-input" value="${roomCode}" onkeyup="if(event.key==='Enter') joinRoom(this.value)" onfocus="this.select()" class="bg-transparent text-sm font-mono font-black text-emerald-400 outline-none w-full uppercase border-b border-transparent focus:border-emerald-500 transition-colors">
+                                <button onclick="joinRoom(document.getElementById('remote-pad-room-input').value)" class="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1 transition-colors flex-none shadow-md shadow-emerald-950/50" title="Confirm Room Code">
+                                    <i data-lucide="check" class="w-3.5 h-3.5"></i> <span class="text-[10px]">Set</span>
+                                </button>
+                            </div>
+                            <div class="flex gap-1">
+                                <button onclick="toggleRemoteModal(true)" class="text-[10px] uppercase font-bold text-indigo-300 hover:text-white bg-indigo-950/70 hover:bg-indigo-900 px-3 py-2 rounded-xl border border-indigo-700/50 transition-colors flex items-center justify-center gap-1 flex-none" title="Show QR Code for Pairing">
+                                    <i data-lucide="qr-code" class="w-3.5 h-3.5"></i> Pair QR
+                                </button>
+                                <button onclick="toggleRemoteMode(false)" class="text-[10px] uppercase font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-2 rounded-xl border border-slate-700 transition-colors flex items-center justify-center gap-1 flex-none">
+                                    <i data-lucide="layout-dashboard" class="w-3.5 h-3.5"></i> Exit Remote
+                                </button>
+                            </div>
+                        </div>
+
+                        <button onclick="remoteLoadModalOpen = true; render();" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 sm:py-2.5 rounded-xl border border-indigo-500/50 shadow-lg flex items-center justify-center gap-2 text-xs uppercase tracking-wider transition-colors active:scale-95">
+                            <i data-lucide="list-video" class="w-4 h-4"></i> Load Next Match (Queue / Bracket)
                         </button>
-                    </div>
 
-                    <button onclick="remoteLoadModalOpen = true; render();" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl border border-indigo-500/50 shadow-lg flex items-center justify-center gap-2 text-xs uppercase tracking-wider transition-colors active:scale-95">
-                        <i data-lucide="list-video" class="w-4 h-4"></i> Load Next Match (Queue / Bracket)
-                    </button>
+                        <!-- Player Selection / Active Turn Switcher -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="setPlayer(1)" class="py-1.5 sm:py-2 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${gameState.currentPlayer === 1 ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-950/50' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}">
+                                <span class="w-2 h-2 rounded-full ${gameState.currentPlayer === 1 ? 'bg-white animate-pulse' : 'bg-slate-600'}"></span>
+                                <span class="truncate">P1: ${gameState.p1Name}</span>
+                            </button>
+                            <button onclick="setPlayer(2)" class="py-1.5 sm:py-2 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${gameState.currentPlayer === 2 ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-950/50' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}">
+                                <span class="w-2 h-2 rounded-full ${gameState.currentPlayer === 2 ? 'bg-white animate-pulse' : 'bg-slate-600'}"></span>
+                                <span class="truncate">P2: ${gameState.p2Name}</span>
+                            </button>
+                        </div>
 
-                    <!-- Player Selection / Active Turn Switcher -->
-                    <div class="grid grid-cols-2 gap-2">
-                        <button onclick="setPlayer(1)" class="py-2 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${gameState.currentPlayer === 1 ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-950/50' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}">
-                            <span class="w-2 h-2 rounded-full ${gameState.currentPlayer === 1 ? 'bg-white animate-pulse' : 'bg-slate-600'}"></span>
-                            <span class="truncate">P1: ${gameState.p1Name}</span>
-                        </button>
-                        <button onclick="setPlayer(2)" class="py-2 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${gameState.currentPlayer === 2 ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-950/50' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}">
-                            <span class="w-2 h-2 rounded-full ${gameState.currentPlayer === 2 ? 'bg-white animate-pulse' : 'bg-slate-600'}"></span>
-                            <span class="truncate">P2: ${gameState.p2Name}</span>
-                        </button>
-                    </div>
+                        <div class="bg-slate-950 border border-slate-800 rounded-xl ${turnPy} px-4 text-center relative overflow-hidden shadow-inner">
+                            <div class="text-[10px] sm:text-xs text-slate-400 uppercase font-bold tracking-widest mb-0.5">Current Turn</div>
+                            <div class="text-xl sm:text-2xl font-black text-white truncate px-2 mb-0.5">${activePlayerName}</div>
+                            <div class="${scoreTextSize} font-extrabold text-emerald-400 font-mono tracking-tight">${activeScore}</div>
+                            ${activeCheck ? `<div class="mt-1 text-xs font-mono font-bold text-yellow-400 bg-yellow-950/40 border border-yellow-500/30 rounded-lg py-0.5 px-2">Checkout: ${activeCheck}</div>` : ''}
+                        </div>
 
-                    <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 text-center relative overflow-hidden shadow-inner">
-                        <div class="text-xs text-slate-400 uppercase font-bold tracking-widest mb-1">Current Turn</div>
-                        <div class="text-2xl font-black text-white truncate px-2 mb-1">${activePlayerName}</div>
-                        <div class="text-5xl font-extrabold text-emerald-400 font-mono tracking-tight">${activeScore}</div>
-                        ${activeCheck ? `<div class="mt-2 text-xs font-mono font-bold text-yellow-400 bg-yellow-950/40 border border-yellow-500/30 rounded-lg py-1 px-2">Checkout: ${activeCheck}</div>` : ''}
-                    </div>
+                        <div class="bg-slate-950 border border-slate-800 rounded-xl p-2.5 sm:p-3 flex items-center justify-between">
+                            <span class="text-xs text-slate-400 uppercase font-bold">Entered:</span>
+                            <div class="text-2xl sm:text-3xl font-mono font-bold tracking-widest ${bufferDisplayClass}">${inputBuffer || '0'}</div>
+                        </div>
 
-                    <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
-                        <span class="text-xs text-slate-400 uppercase font-bold">Entered:</span>
-                        <div class="text-3xl font-mono font-bold tracking-widest ${bufferDisplayClass}">${inputBuffer || '0'}</div>
-                    </div>
+                        <div class="grid grid-cols-4 gap-1.5">
+                            ${quickButtons}
+                        </div>
 
-                    <div class="grid grid-cols-4 gap-1.5">
-                        ${quickButtons}
-                    </div>
+                        <div class="grid grid-cols-3 gap-1.5 sm:gap-2">
+                            ${numButtons}
+                            <button onclick="clearInput()" class="bg-slate-800 text-red-400 font-bold text-sm ${numPy} rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="eraser" class="w-5 h-5"></i></button>
+                            <button onclick="handleNumClick('0')" class="bg-slate-800 text-white ${numTextSize} font-black ${numPy} rounded-xl border border-slate-700 shadow-md">0</button>
+                            <button onclick="handleBackspace()" class="bg-slate-800 text-amber-400 font-bold text-sm ${numPy} rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="chevron-left" class="w-6 h-6"></i></button>
+                        </div>
 
-                    <div class="grid grid-cols-3 gap-2">
-                        ${numButtons}
-                        <button onclick="clearInput()" class="bg-slate-800 text-red-400 font-bold text-sm py-3 rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="eraser" class="w-5 h-5"></i></button>
-                        <button onclick="handleNumClick('0')" class="bg-slate-800 text-white text-2xl font-black py-3 rounded-xl border border-slate-700 shadow-md">0</button>
-                        <button onclick="handleBackspace()" class="bg-slate-800 text-amber-400 font-bold text-sm py-3 rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="chevron-left" class="w-6 h-6"></i></button>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2 mt-1">
-                        <button onclick="handleUndo()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl font-bold uppercase text-xs flex items-center justify-center gap-2 border border-slate-700">
-                            <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Undo
-                        </button>
-                        <button onclick="handleEnter()" class="bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-black uppercase text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50">
-                            Submit <i data-lucide="corner-down-left" class="w-4 h-4"></i>
-                        </button>
+                        <div class="grid grid-cols-2 gap-2 mt-0.5">
+                            <button onclick="handleUndo()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 py-2.5 sm:py-3 rounded-xl font-bold uppercase text-xs flex items-center justify-center gap-2 border border-slate-700">
+                                <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Undo
+                            </button>
+                            <button onclick="handleEnter()" class="bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 sm:py-3 rounded-xl font-black uppercase text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50">
+                                Submit <i data-lucide="corner-down-left" class="w-4 h-4"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -2168,6 +2206,7 @@
             syncToRemote();
         }
 
+        // Initialize application on load
         init();
     </script>
 </body>
