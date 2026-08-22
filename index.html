@@ -306,7 +306,7 @@
         let roomCode = generateRoomCode();
         let remoteConnected = false;
         let isRemoteMode = false;
-        let remoteScale = localStorage.getItem('dartsRemoteScale') || 'fit'; // '80', '90', '100', 'fit'
+        let remoteScale = localStorage.getItem('dartsRemoteScale') || 'fit'; // 'fit', '80', '90', '100', '125', '150', '175', '200'
         
         let mqttClient = null;
         let myClientId = 'darts_' + Math.random().toString(16).substr(2, 8);
@@ -1505,30 +1505,32 @@
                 `;
             }
 
-            const scaleBtnClass = (val) => remoteScale === val ? 'bg-emerald-600 text-white font-black' : 'bg-slate-950 text-slate-400 hover:text-white';
+            const scaleOptions = [
+                { val: 'fit', label: 'Fit Screen (Auto)' },
+                { val: '80', label: '80%' },
+                { val: '90', label: '90%' },
+                { val: '100', label: '100% (Default)' },
+                { val: '125', label: '125%' },
+                { val: '150', label: '150%' },
+                { val: '175', label: '175%' },
+                { val: '200', label: '200%' }
+            ];
+
+            const scaleSelectOptions = scaleOptions.map(opt => 
+                `<option value="${opt.val}" class="bg-slate-900 text-white" ${remoteScale === opt.val ? 'selected' : ''}>${opt.label}</option>`
+            ).join('');
 
             const html = `
-                <div class="w-full flex flex-col items-center justify-center ${isFitMode ? 'max-h-[100dvh] overflow-hidden' : ''}">
+                <div class="w-full flex flex-col items-center justify-center ${isFitMode ? 'max-h-[100dvh] overflow-hidden' : 'pb-12'}">
                     
-                    <!-- Viewport & Scale Control Bar -->
-                    <div class="w-full max-w-md mb-2 flex items-center justify-between bg-slate-950/80 border border-slate-800/80 rounded-xl px-2.5 py-1.5 shadow-md">
-                        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                    <!-- Viewport & Scale Control Bar Dropdown Menu -->
+                    <div class="w-full max-w-md mb-2 flex items-center justify-between bg-slate-950/80 border border-slate-800/80 rounded-xl px-3 py-1.5 shadow-md gap-2">
+                        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 flex-none">
                             <i data-lucide="scaling" class="w-3.5 h-3.5 text-emerald-400"></i> Screen Fit:
                         </span>
-                        <div class="flex items-center gap-1">
-                            <button onclick="setRemoteScale('fit')" class="px-2 py-0.5 rounded text-[10px] font-bold uppercase transition-colors ${scaleBtnClass('fit')}" title="Auto fit height to phone screen">
-                                Fit Screen
-                            </button>
-                            <button onclick="setRemoteScale('80')" class="px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${scaleBtnClass('80')}">
-                                80%
-                            </button>
-                            <button onclick="setRemoteScale('90')" class="px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${scaleBtnClass('90')}">
-                                90%
-                            </button>
-                            <button onclick="setRemoteScale('100')" class="px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${scaleBtnClass('100')}">
-                                100%
-                            </button>
-                        </div>
+                        <select onchange="setRemoteScale(this.value)" class="bg-slate-900 text-emerald-400 border border-slate-700/80 rounded-lg px-2.5 py-1 text-xs font-bold outline-none cursor-pointer focus:border-emerald-500 transition-colors shadow-sm">
+                            ${scaleSelectOptions}
+                        </select>
                     </div>
 
                     <div class="max-w-md mx-auto w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col ${padPadding} ${gapSize} transition-all duration-300" style="${!isFitMode ? `transform: scale(${scaleFactor}); transform-origin: top center;` : ''}">
