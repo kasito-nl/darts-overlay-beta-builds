@@ -265,6 +265,7 @@
             setsToWin: 2,
             tvMode: true,
             showCheckouts: true,
+            showRemoteCheckouts: true,
             showAverage: true,
             activeQuickTab: 'match',
             bracketActiveTab: 'bracket',
@@ -747,7 +748,7 @@
                 config[key] = parseInt(value);
                 syncActiveMatchToBracket();
                 render();
-            } else if (key === 'showCheckouts' || key === 'showAverage') {
+            } else if (key === 'showCheckouts' || key === 'showRemoteCheckouts' || key === 'showAverage') {
                 config[key] = value;
                 render();
             } else if (key === 'customHostUrl') {
@@ -1385,7 +1386,9 @@
         function renderRemotePadView() {
             const activePlayerName = gameState.currentPlayer === 1 ? gameState.p1Name : gameState.p2Name;
             const activeScore = gameState.currentPlayer === 1 ? gameState.p1Score : gameState.p2Score;
-            const activeCheck = getCheckout(activeScore);
+            
+            // Only query checkout hint if showRemoteCheckouts is enabled
+            const activeCheck = config.showRemoteCheckouts ? getCheckout(activeScore) : null;
             
             const isFitMode = remoteScale === 'fit';
             const scaleFactor = isFitMode ? 1 : parseFloat(remoteScale) / 100;
@@ -1523,14 +1526,22 @@
             const html = `
                 <div class="w-full flex flex-col items-center justify-center ${isFitMode ? 'max-h-[100dvh] overflow-hidden' : 'pb-12'}">
                     
-                    <!-- Viewport & Scale Control Bar Dropdown Menu -->
+                    <!-- Viewport & Scale Control Bar + Direct Remote Checkouts Toggle -->
                     <div class="w-full max-w-md mb-2 flex items-center justify-between bg-slate-950/80 border border-slate-800/80 rounded-xl px-3 py-1.5 shadow-md gap-2">
-                        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 flex-none">
-                            <i data-lucide="scaling" class="w-3.5 h-3.5 text-emerald-400"></i> Screen Fit:
-                        </span>
-                        <select onchange="setRemoteScale(this.value)" class="bg-slate-900 text-emerald-400 border border-slate-700/80 rounded-lg px-2.5 py-1 text-xs font-bold outline-none cursor-pointer focus:border-emerald-500 transition-colors shadow-sm">
-                            ${scaleSelectOptions}
-                        </select>
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 flex-none">
+                                <i data-lucide="scaling" class="w-3.5 h-3.5 text-emerald-400"></i> Fit:
+                            </span>
+                            <select onchange="setRemoteScale(this.value)" class="bg-slate-900 text-emerald-400 border border-slate-700/80 rounded-lg px-2 py-0.5 text-xs font-bold outline-none cursor-pointer focus:border-emerald-500 transition-colors shadow-sm">
+                                ${scaleSelectOptions}
+                            </select>
+                        </div>
+
+                        <!-- Direct Remote Checkouts Toggle Button -->
+                        <label class="flex items-center gap-1.5 text-[10px] font-bold text-slate-300 uppercase tracking-wider bg-slate-900 border border-slate-700/80 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-slate-800 transition-colors shadow-sm" title="Enable/Disable checkout hints on this remote">
+                            <input type="checkbox" onchange="updateConfig('showRemoteCheckouts', this.checked)" ${config.showRemoteCheckouts ? 'checked' : ''} class="w-3 h-3 accent-emerald-500 cursor-pointer">
+                            <span>Checkouts</span>
+                        </label>
                     </div>
 
                     <div class="max-w-md mx-auto w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col ${padPadding} ${gapSize} transition-all duration-300" style="${!isFitMode ? `transform: scale(${scaleFactor}); transform-origin: top center;` : ''}">
@@ -1706,6 +1717,7 @@
                 const p1Checked = gameState.currentPlayer === 1 ? 'checked' : '';
                 const p2Checked = gameState.currentPlayer === 2 ? 'checked' : '';
                 const checkoutsChecked = config.showCheckouts ? 'checked' : '';
+                const remoteCheckoutsChecked = config.showRemoteCheckouts ? 'checked' : '';
                 const averagesChecked = config.showAverage ? 'checked' : '';
 
                 tabContent = `
@@ -1743,14 +1755,18 @@
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-2">
-                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2.5 py-1.5 rounded cursor-pointer hover:bg-slate-900">
-                                <span class="text-slate-200 font-bold uppercase text-xs">Checkouts</span>
-                                <input type="checkbox" id="toggle-checkouts" onchange="updateConfig('showCheckouts', this.checked)" ${checkoutsChecked} class="w-4 h-4 accent-emerald-500 cursor-pointer">
+                        <div class="grid grid-cols-3 gap-1.5">
+                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2 py-1.5 rounded cursor-pointer hover:bg-slate-900" title="Show checkouts on popout/TV overlay">
+                                <span class="text-slate-200 font-bold uppercase text-[10px] sm:text-xs">TV Check</span>
+                                <input type="checkbox" id="toggle-checkouts" onchange="updateConfig('showCheckouts', this.checked)" ${checkoutsChecked} class="w-3.5 h-3.5 accent-emerald-500 cursor-pointer">
                             </label>
-                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2.5 py-1.5 rounded cursor-pointer hover:bg-slate-900">
-                                <span class="text-slate-200 font-bold uppercase text-xs">Averages</span>
-                                <input type="checkbox" id="toggle-averages" onchange="updateConfig('showAverage', this.checked)" ${averagesChecked} class="w-4 h-4 accent-emerald-500 cursor-pointer">
+                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2 py-1.5 rounded cursor-pointer hover:bg-slate-900" title="Show checkouts on mobile remote">
+                                <span class="text-slate-200 font-bold uppercase text-[10px] sm:text-xs">Remote Check</span>
+                                <input type="checkbox" id="toggle-remote-checkouts" onchange="updateConfig('showRemoteCheckouts', this.checked)" ${remoteCheckoutsChecked} class="w-3.5 h-3.5 accent-emerald-500 cursor-pointer">
+                            </label>
+                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2 py-1.5 rounded cursor-pointer hover:bg-slate-900">
+                                <span class="text-slate-200 font-bold uppercase text-[10px] sm:text-xs">Averages</span>
+                                <input type="checkbox" id="toggle-averages" onchange="updateConfig('showAverage', this.checked)" ${averagesChecked} class="w-3.5 h-3.5 accent-emerald-500 cursor-pointer">
                             </label>
                         </div>
 
