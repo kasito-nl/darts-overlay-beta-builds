@@ -1,0 +1,3116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Darts Scoreboard Overlay & Remote Controller</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- SheetJS for Excel (.xlsx) Export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <!-- QRCode JS for instant remote mobile pairing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+    <!-- MQTT for Public Free Remote Sync -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+    <!-- Google Fonts (Inter & Roboto Mono) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-mono { font-family: 'Roboto Mono', monospace; }
+        
+        /* Dynamic indicator pulse color variable */
+        :root {
+            --indicator-color: 22, 163, 74;
+        }
+
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(var(--indicator-color), 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(var(--indicator-color), 0); }
+            100% { box-shadow: 0 0 0 0 rgba(var(--indicator-color), 0); }
+        }
+        .animate-pulse-ring {
+            animation: pulse-ring 2s infinite;
+        }
+
+        /* Clean scrollbars */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            height: 10px;
+            width: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #059669;
+            border-radius: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #10b981;
+        }
+        .custom-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: #059669 rgba(15, 23, 42, 0.8);
+        }
+
+        /* Editable inline elements */
+        [contenteditable="true"] {
+            outline: none;
+            cursor: text;
+            border-bottom: 1px solid transparent;
+            transition: all 0.2s;
+        }
+        [contenteditable="true"]:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            border-bottom-color: rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+        }
+        [contenteditable="true"]:focus {
+            background-color: rgba(0, 0, 0, 0.2);
+            border-bottom-color: #10b981;
+            border-radius: 4px;
+        }
+        
+        input[type="color"] {
+            -webkit-appearance: none;
+            border: none;
+            padding: 0;
+            background: none;
+            cursor: pointer;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch {
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="text-white min-h-screen transition-colors duration-500 pb-16" id="body-el" style="background-color: #00b140;">
+
+    <div id="app" class="flex flex-col min-h-screen">
+        
+        <!-- Reset Confirmation Modal -->
+        <div id="confirm-modal" class="fixed inset-0 z-[60] flex items-end justify-center pb-48 p-4 hidden opacity-0 transition-opacity duration-300">
+            <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform scale-95 transition-transform duration-300" id="confirm-panel">
+                <div class="flex items-center gap-3 mb-4 text-red-400">
+                    <div class="p-2 bg-red-900/30 rounded-lg">
+                        <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white">Reset Match?</h3>
+                </div>
+                <p class="text-slate-400 mb-6 text-sm">Current scores, averages, and throw history will be permanently lost. This cannot be undone.</p>
+                <div class="flex justify-end gap-2">
+                    <button id="btn-confirm-cancel" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 font-medium transition-colors text-sm">Cancel</button>
+                    <button id="btn-confirm-yes" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded font-medium transition-colors text-sm">Yes, Reset Match</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alert Notification Modal -->
+        <div id="alert-modal" class="fixed inset-0 z-[70] flex items-end justify-center pb-24 p-4 hidden opacity-0 transition-opacity duration-300">
+            <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform scale-95 transition-transform duration-300" id="alert-panel">
+                <div class="flex items-center gap-3 mb-2 text-amber-400">
+                    <i data-lucide="info" class="w-6 h-6"></i>
+                    <h3 class="text-lg font-bold text-white">Notice</h3>
+                </div>
+                <p id="alert-message" class="text-slate-300 mb-6 text-sm">Alert message here.</p>
+                <div class="flex justify-end">
+                    <button id="btn-alert-ok" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium transition-colors text-sm">OK</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Remote Score App Pairing Modal -->
+        <div id="remote-modal" class="fixed inset-0 z-[65] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 hidden opacity-0 transition-opacity duration-300">
+            <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl transform scale-95 transition-transform duration-300 flex flex-col items-center text-center" id="remote-panel">
+                <div class="w-12 h-12 bg-emerald-950 border border-emerald-500/40 rounded-full flex items-center justify-center text-emerald-400 mb-3 shadow-lg shadow-emerald-950/50">
+                    <i data-lucide="smartphone" class="w-6 h-6"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white">Connect Remote Score App</h3>
+                <p class="text-slate-400 text-xs mt-1 mb-4">Scan the QR code with your phone or enter a Room Code on another device to control scores remotely.</p>
+
+                <div class="bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 mb-4 w-full flex flex-col items-center">
+                    <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Active Room Code</span>
+                    <div class="flex items-center justify-center gap-2 w-full max-w-xs my-1">
+                        <input type="text" id="modal-room-code" onkeyup="if(event.key==='Enter') joinRoom(this.value)" onfocus="this.select()" class="text-2xl font-mono font-black text-emerald-400 tracking-wider bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-center outline-none focus:border-emerald-500 w-full uppercase transition-colors" value="------">
+                        <button onclick="joinRoom(document.getElementById('modal-room-code').value)" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1 transition-colors shadow-md shadow-emerald-950/50 flex-none" title="Set Room Code">
+                            <i data-lucide="check" class="w-4 h-4"></i> Set
+                        </button>
+                    </div>
+                    <button onclick="copyRoomLink()" class="text-xs text-slate-300 hover:text-white flex items-center gap-1 mt-2 transition-colors bg-slate-900 px-3 py-1 rounded-lg border border-slate-800">
+                        <i data-lucide="copy" class="w-3.5 h-3.5 text-emerald-400"></i> Copy Direct Remote Link
+                    </button>
+                </div>
+
+                <!-- Custom Host URL Input -->
+                <div class="w-full mb-3 text-left">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Web Address Base URL</label>
+                        <span class="text-[9px] text-emerald-400 font-mono">GitHub Pages Ready</span>
+                    </div>
+                    <input type="text" id="custom-host-url" placeholder="e.g. https://yourusername.github.io/repo-name" oninput="updateRemoteQrCode()" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white font-mono outline-none focus:border-emerald-500">
+                    <div class="text-[10px] text-slate-400 mt-1 leading-tight">
+                        GitHub Pages works out of the box because it uses secure HTTPS and public WebSocket cloud syncing!
+                    </div>
+                </div>
+
+                <!-- File / Localhost Protocol Warning Banner -->
+                <div id="file-protocol-warning" class="hidden w-full mb-3 bg-amber-950/60 border border-amber-500/40 rounded-xl p-2.5 text-left flex items-start gap-2">
+                    <i data-lucide="alert-circle" class="w-4 h-4 text-amber-400 flex-none mt-0.5"></i>
+                    <p id="warning-text" class="text-[11px] text-amber-200 leading-tight"></p>
+                </div>
+
+                <!-- QR Code Container -->
+                <div class="p-3 bg-white rounded-xl shadow-2xl mb-5 flex items-center justify-center border-4 border-emerald-500/30">
+                    <div id="qrcode"></div>
+                </div>
+
+                <div class="flex gap-2 w-full">
+                    <button onclick="toggleRemoteModal(false); toggleRemoteMode(true);" class="w-1/2 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-colors text-xs uppercase tracking-wider flex items-center justify-center gap-1">
+                        <i data-lucide="gamepad-2" class="w-4 h-4"></i> Use Remote Here
+                    </button>
+                    <button id="btn-close-remote" onclick="toggleRemoteModal(false)" class="w-1/2 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold transition-colors text-xs uppercase tracking-wider">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 hidden opacity-0 transition-opacity duration-300">
+            <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-lg shadow-2xl overflow-y-auto max-h-[90vh] transform scale-95 transition-transform duration-300" id="settings-panel">
+                <div class="mt-8 flex justify-end gap-2">
+                    <button id="btn-close-settings" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 font-medium transition-colors">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Root -->
+        <main class="flex-grow p-4 md:p-6 lg:p-8 max-w-7xl mx-auto w-full flex flex-col gap-8" id="main-content">
+            <!-- Rendered by JS -->
+        </main>
+
+        <!-- Footer -->
+        <footer class="p-2 text-center text-[25px] font-mono text-white/25 select-none mt-8">
+            Made by Alex "Neon Noodle" Rutenfrans & Kasimier "Kasito" Kars
+        </footer>
+
+    </div>
+
+    <script>
+        const CHECKOUTS = {
+            170: "T20 T20 BULL", 167: "T20 T19 BULL", 164: "T20 T18 BULL", 161: "T20 T17 BULL",
+            160: "T20 T20 D20", 158: "T20 T20 D19", 157: "T20 T19 D20", 156: "T20 T20 D18",
+            155: "T20 T19 D19", 154: "T20 T18 D20", 153: "T20 T19 D18", 152: "T20 T20 D16",
+            151: "T20 T17 D20", 150: "T20 T18 D18", 149: "T20 T19 D16", 148: "T20 T16 D20",
+            147: "T20 T17 D18", 146: "T20 T18 D16", 145: "T20 T15 D20", 144: "T20 T20 D12",
+            143: "T20 T17 D16", 142: "T20 T14 D20", 141: "T20 T19 D12", 140: "T20 T16 D16",
+            139: "T20 T13 D20", 138: "T20 T18 D12", 137: "T19 T16 D16", 136: "T20 T20 D8",
+            135: "T20 T17 D12", 134: "T20 T14 D16", 133: "T20 T19 D8", 132: "T20 T16 D12",
+            131: "T20 T13 D16", 130: "T20 T18 D8", 129: "T19 T16 D12", 128: "T18 T14 D16",
+            127: "T20 T17 D8", 126: "T19 T19 D16", 125: "BULL T17 D12", 124: "T20 T16 D8",
+            123: "T19 T16 D9", 122: "T18 T20 D4", 121: "T20 T15 D8", 120: "T20 20 D20",
+            119: "T19 T10 D16", 118: "T20 18 D20", 117: "T20 17 D20", 116: "T20 16 D20",
+            115: "T20 15 D20", 114: "T20 14 D20", 113: "T20 13 D20", 112: "T20 12 D20",
+            111: "T20 19 D16", 110: "T20 10 D20", 109: "T20 17 D16", 108: "T20 16 D16",
+            107: "T19 18 D16", 106: "T20 14 D16", 105: "T20 13 D16", 104: "T18 18 D16",
+            103: "T20 3 D20", 102: "T20 10 D16", 101: "T17 10 D20", 100: "T20 D20",
+            99: "T19 10 D16", 98: "T20 D19", 97: "T19 D20", 96: "T20 D18",
+            95: "T19 D19", 94: "T18 D20", 93: "T19 D18", 92: "T20 D16",
+            91: "T17 D20", 90: "T20 D15", 89: "T19 D16", 88: "T20 D14",
+            87: "T17 D18", 86: "T18 D16", 85: "T15 D20", 84: "T20 D12",
+            83: "T17 D16", 82: "T14 D20", 81: "T19 D12", 80: "T20 D10",
+            79: "T13 D20", 78: "T18 D12", 77: "T19 D10", 76: "T20 D8",
+            75: "T17 D12", 74: "T14 D16", 73: "T19 D8", 72: "T16 D12",
+            71: "T13 D16", 70: "T18 D8", 69: "T15 D12", 68: "T20 D4",
+            67: "T17 D8", 66: "T10 D18", 65: "T19 D4", 64: "T16 D8",
+            63: "T13 D12", 62: "T10 D16", 61: "T15 D8", 60: "20 D20",
+            59: "19 D20", 58: "18 D20", 57: "17 D20", 56: "16 D20",
+            55: "15 D20", 54: "14 D20", 53: "13 D20", 52: "12 D20",
+            51: "19 D16", 50: "10 D20", 49: "17 D16", 48: "16 D16",
+            47: "15 D16", 46: "6 D20", 45: "13 D16", 44: "4 D20",
+            43: "3 D20", 42: "6 D18", 41: "9 D16", 40: "D20",
+            39: "7 D16", 38: "D19", 37: "5 D16", 36: "D18",
+            35: "3 D16", 34: "D17", 33: "1 D16", 32: "D16",
+            31: "15 D8", 30: "D15", 29: "13 D8", 28: "D14",
+            27: "11 D8", 26: "D13", 25: "9 D8", 24: "D12",
+            23: "7 D8", 22: "D11", 21: "5 D8", 20: "D10",
+            19: "3 D8", 18: "D9", 17: "1 D8", 16: "D8",
+            15: "7 D4", 14: "D7", 13: "5 D4", 12: "D6",
+            11: "3 D4", 10: "D5", 9: "1 D4", 8: "D4",
+            7: "3 D2", 6: "D3", 5: "1 D2", 4: "D2",
+            3: "1 D1", 2: "D1",
+        };
+
+        let config = {
+            startingScore: 501,
+            legsPerSet: 3,
+            setsToWin: 2,
+            tvMode: true,
+            showCheckouts: true,
+            showRemoteCheckouts: true,
+            showAverage: true,
+            activeQuickTab: 'match',
+            bracketActiveTab: 'groups', // 'groups', 'bracket', 'settings'
+            tournamentFormat: 'group_stage',
+            chromaColor: '#00b140',
+            customHostUrl: localStorage.getItem('dartsCustomHost') || "",
+            matchTitle: "Click here to type a win condition",
+            footerText: "Click here to type the tournament name",
+            colors: {
+                headerBg: '#0f0f0f',
+                headerText: '#ffffff',
+                playerBg: '#e2e2e2',
+                playerText: '#000000',
+                scoreBg: '#d60000',
+                scoreText: '#ffffff',
+                indicator: '#16a34a'
+            }
+        };
+
+        let gameState = {
+            p1Name: "Player 1",
+            p2Name: "Player 2",
+            p1Score: 501,
+            p2Score: 501,
+            p1Legs: 0,
+            p2Legs: 0,
+            p1Sets: 0,
+            p2Sets: 0,
+            p1TotalScored: 0,
+            p1DartsThrown: 0,
+            p2TotalScored: 0,
+            p2DartsThrown: 0,
+            startingPlayer: 1,
+            currentPlayer: 1, 
+            lastTurnScore: null,
+            matchWinner: null,
+            bust: false
+        };
+
+        let queueInputs = {
+            p1: '',
+            p2: '',
+            remoteP1: '',
+            remoteP2: ''
+        };
+
+        let roomCode = generateRoomCode();
+        let remoteConnected = false;
+        let isRemoteMode = false;
+        let remoteScale = localStorage.getItem('dartsRemoteScale') || 'fit';
+        
+        let mqttClient = null;
+        let myClientId = 'darts_' + Math.random().toString(16).substr(2, 8);
+        let mqttTopic = '';
+        let localChannel = null;
+
+        let undoStack = [];
+        let inputBuffer = "";
+        let matchQueue = [];
+        let popupWindow = null;
+        let bracketPopupWindow = null;
+        let activeBracketMatchId = null;
+        let activeGroupMatchRef = null; // { groupIndex: number, matchIndex: number }
+        let tournamentSize = 8;
+        let qrCodeInstance = null;
+        let remoteLoadModalOpen = false;
+        let remoteLoadTab = 'queue';
+        let selectedRemoteGroupIdx = 0;
+
+        let roundSettings = {
+            group: { startingScore: 501, legs: 3, sets: 1 },
+            r64: { startingScore: 501, legs: 3, sets: 1 },
+            r32: { startingScore: 501, legs: 3, sets: 1 },
+            r16: { startingScore: 501, legs: 3, sets: 1 },
+            quarter: { startingScore: 501, legs: 3, sets: 1 },
+            semi: { startingScore: 501, legs: 3, sets: 2 },
+            final: { startingScore: 501, legs: 5, sets: 3 }
+        };
+
+        function generateRoomCode() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let code = 'DARTS-';
+            for (let i = 0; i < 4; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
+
+        function setChroma(color) {
+            config.chromaColor = color;
+            const bodyEl = document.getElementById('body-el');
+            if (bodyEl) bodyEl.style.backgroundColor = color;
+            
+            if (popupWindow && !popupWindow.closed && popupWindow.document && popupWindow.document.body) {
+                popupWindow.document.body.style.backgroundColor = color;
+            }
+
+            if (color === '#00b140') {
+                updateConfig('color-indicator', '#dc2626');
+            } else if (color === '#0047bb' || color === '#ff00ff') {
+                updateConfig('color-indicator', '#16a34a');
+            }
+
+            const picker = document.getElementById('chroma-picker-input');
+            if (picker) picker.value = color;
+
+            const indicatorPicker = document.querySelector('input[oninput*="color-indicator"]');
+            if (indicatorPicker) {
+                indicatorPicker.value = config.colors.indicator;
+            }
+        }
+
+        function updateConfig(key, value) {
+            if (key === 'startingScore' || key === 'legsPerSet' || key === 'setsToWin') {
+                config[key] = parseInt(value);
+                syncActiveMatchToBracket();
+                render();
+            } else if (key === 'showCheckouts' || key === 'showRemoteCheckouts' || key === 'showAverage') {
+                config[key] = value;
+                render();
+            } else if (key === 'customHostUrl') {
+                config[key] = value.trim();
+                localStorage.setItem('dartsCustomHost', config[key]);
+            } else if (key.startsWith('color-')) {
+                const colorKey = key.replace('color-', '');
+                config.colors[colorKey] = value;
+                
+                if (colorKey === 'headerBg') updateStyles('.tv-style-header', 'backgroundColor', value);
+                if (colorKey === 'headerText') updateStyles('.tv-style-header', 'color', value);
+                if (colorKey === 'playerBg') updateStyles('.tv-style-player', 'backgroundColor', value);
+                if (colorKey === 'playerText') updateStyles('.tv-style-player', 'color', value);
+                if (colorKey === 'scoreBg') updateStyles('.tv-style-score', 'backgroundColor', value);
+                if (colorKey === 'scoreText') updateStyles('.tv-style-score', 'color', value);
+                
+                if (colorKey === 'indicator') {
+                    const rgb = hexToRgb(value);
+                    document.documentElement.style.setProperty('--indicator-color', rgb);
+                    if (popupWindow && !popupWindow.closed && popupWindow.document) {
+                        popupWindow.document.documentElement.style.setProperty('--indicator-color', rgb);
+                    }
+                    updateStyles('.tv-indicator-dot', 'backgroundColor', value);
+                    document.querySelectorAll('.tv-indicator-dot').forEach(el => {
+                        el.style.boxShadow = `0 0 10px ${value}CC`; 
+                    });
+                }
+            } else {
+                config[key] = value;
+            }
+
+            syncToRemote();
+
+            if (popupWindow && !popupWindow.closed) {
+                renderTvOverlay(true);
+            }
+        }
+
+        function updateStyles(selector, prop, value) {
+            document.querySelectorAll(selector).forEach(el => el.style[prop] = value);
+            if (popupWindow && !popupWindow.closed && popupWindow.document) {
+                popupWindow.document.querySelectorAll(selector).forEach(el => el.style[prop] = value);
+            }
+        }
+
+        function hexToRgb(hex) {
+            const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+            hex = hex.replace(shorthandRegex, function(m, r, g, b) {
+                return r + r + g + g + b + b;
+            });
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '22, 163, 74';
+        }
+
+        function calculateAverage(playerNum) {
+            const totalScored = playerNum === 1 ? gameState.p1TotalScored : gameState.p2TotalScored;
+            const dartsThrown = playerNum === 1 ? gameState.p1DartsThrown : gameState.p2DartsThrown;
+            if (!dartsThrown || dartsThrown === 0) return "0.00";
+            return ((totalScored / dartsThrown) * 3).toFixed(2);
+        }
+
+        function getCheckout(score) {
+            if (score > 170 || score < 2) return null;
+            return CHECKOUTS[score] || null;
+        }
+
+        function generateGroups(totalPlayers = 8, playersPerGroup = 4) {
+            const numGroups = Math.max(2, Math.floor(totalPlayers / playersPerGroup));
+            const groupNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
+            const groupsArr = [];
+
+            for (let g = 0; g < numGroups; g++) {
+                const groupName = `Group ${groupNames[g] || (g + 1)}`;
+                const players = [];
+                for (let p = 0; p < playersPerGroup; p++) {
+                    const playerNum = (g * playersPerGroup) + p + 1;
+                    players.push(`Player ${playerNum}`);
+                }
+
+                const matches = [];
+                for (let i = 0; i < players.length; i++) {
+                    for (let j = i + 1; j < players.length; j++) {
+                        matches.push({
+                            id: `g_${g}_${i}_${j}`,
+                            p1Index: i,
+                            p2Index: j,
+                            p1Name: players[i],
+                            p2Name: players[j],
+                            p1Score: '',
+                            p2Score: '',
+                            winner: null
+                        });
+                    }
+                }
+
+                groupsArr.push({
+                    id: groupNames[g] || (g + 1),
+                    name: groupName,
+                    players,
+                    matches
+                });
+            }
+            return groupsArr;
+        }
+
+        let groups = generateGroups(tournamentSize, 4);
+
+        function regenerateGroupMatches(group, groupIdx = 0) {
+            const oldMatchesMap = new Map();
+            if (group.matches) {
+                group.matches.forEach(m => {
+                    oldMatchesMap.set(`${m.p1Name} vs ${m.p2Name}`, m);
+                    oldMatchesMap.set(`${m.p2Name} vs ${m.p1Name}`, m);
+                });
+            }
+
+            const newMatches = [];
+            for (let i = 0; i < group.players.length; i++) {
+                for (let j = i + 1; j < group.players.length; j++) {
+                    const p1 = group.players[i];
+                    const p2 = group.players[j];
+                    const matchKey = `${p1} vs ${p2}`;
+                    const existing = oldMatchesMap.get(matchKey);
+
+                    if (existing && existing.p1Name === p1 && existing.p2Name === p2) {
+                        existing.p1Index = i;
+                        existing.p2Index = j;
+                        newMatches.push(existing);
+                    } else if (existing && existing.p1Name === p2 && existing.p2Name === p1) {
+                        newMatches.push({
+                            id: existing.id || `g_${groupIdx}_${i}_${j}`,
+                            p1Index: i,
+                            p2Index: j,
+                            p1Name: p1,
+                            p2Name: p2,
+                            p1Score: existing.p2Score,
+                            p2Score: existing.p1Score,
+                            winner: existing.winner === 1 ? 2 : (existing.winner === 2 ? 1 : null)
+                        });
+                    } else {
+                        newMatches.push({
+                            id: `g_${groupIdx}_${i}_${j}_${Math.random().toString(36).substring(2,6)}`,
+                            p1Index: i,
+                            p2Index: j,
+                            p1Name: p1,
+                            p2Name: p2,
+                            p1Score: '',
+                            p2Score: '',
+                            winner: null
+                        });
+                    }
+                }
+            }
+            group.matches = newMatches;
+        }
+
+        function addPlayerToGroup(groupIdx) {
+            const group = groups[groupIdx];
+            if (!group) return;
+            
+            let totalPlayers = 0;
+            groups.forEach(g => totalPlayers += g.players.length);
+            
+            group.players.push(`Player ${totalPlayers + 1}`);
+            regenerateGroupMatches(group, groupIdx);
+            render();
+            syncToRemote();
+        }
+
+        function removePlayerFromGroup(groupIdx, playerIdx) {
+            const group = groups[groupIdx];
+            if (!group) return;
+            if (group.players.length <= 2) {
+                toggleAlert(true, "A group must have at least 2 players.");
+                return;
+            }
+            group.players.splice(playerIdx, 1);
+            regenerateGroupMatches(group, groupIdx);
+            render();
+            syncToRemote();
+        }
+
+        function addGroup() {
+            const groupNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
+            const gIdx = groups.length;
+            const letter = groupNames[gIdx] || (gIdx + 1);
+            
+            let totalPlayers = 0;
+            groups.forEach(g => totalPlayers += g.players.length);
+
+            const newGroup = {
+                id: letter,
+                name: `Group ${letter}`,
+                players: [`Player ${totalPlayers + 1}`, `Player ${totalPlayers + 2}`, `Player ${totalPlayers + 3}`],
+                matches: []
+            };
+            regenerateGroupMatches(newGroup, gIdx);
+            groups.push(newGroup);
+            render();
+            syncToRemote();
+        }
+
+        function removeGroup(groupIdx) {
+            if (groups.length <= 2) {
+                toggleAlert(true, "Tournament requires at least 2 groups.");
+                return;
+            }
+            groups.splice(groupIdx, 1);
+            render();
+            syncToRemote();
+        }
+
+        function updateGroupPlayerName(groupIdx, playerIdx, newName) {
+            const group = groups[groupIdx];
+            if (!group) return;
+            const oldName = group.players[playerIdx];
+            group.players[playerIdx] = newName;
+            
+            group.matches.forEach(m => {
+                if (m.p1Index === playerIdx || m.p1Name === oldName) m.p1Name = newName;
+                if (m.p2Index === playerIdx || m.p2Name === oldName) m.p2Name = newName;
+            });
+
+            if (activeGroupMatchRef && activeGroupMatchRef.groupIndex === groupIdx) {
+                const match = group.matches[activeGroupMatchRef.matchIndex];
+                if (match) {
+                    if (match.p1Index === playerIdx) gameState.p1Name = newName;
+                    if (match.p2Index === playerIdx) gameState.p2Name = newName;
+                }
+            }
+
+            render();
+            syncToRemote();
+        }
+
+        function updateGroupMatchScore(groupIdx, matchIdx, field, value) {
+            const group = groups[groupIdx];
+            if (!group) return;
+            const match = group.matches[matchIdx];
+            if (!match) return;
+
+            match[field] = value;
+
+            const s1 = parseInt(match.p1Score);
+            const s2 = parseInt(match.p2Score);
+            if (!isNaN(s1) && !isNaN(s2)) {
+                if (s1 > s2) match.winner = 1;
+                else if (s2 > s1) match.winner = 2;
+                else match.winner = null;
+            } else {
+                match.winner = null;
+            }
+
+            if (activeGroupMatchRef && activeGroupMatchRef.groupIndex === groupIdx && activeGroupMatchRef.matchIndex === matchIdx) {
+                const val = parseInt(value) || 0;
+                if (field === 'p1Score') {
+                    if (config.setsToWin > 1) gameState.p1Sets = val;
+                    else gameState.p1Legs = val;
+                } else if (field === 'p2Score') {
+                    if (config.setsToWin > 1) gameState.p2Sets = val;
+                    else gameState.p2Legs = val;
+                }
+            }
+
+            render();
+            syncToRemote();
+        }
+
+        function calculateGroupStandings(group) {
+            const standings = group.players.map((pName, pIdx) => ({
+                playerIndex: pIdx,
+                name: pName,
+                played: 0,
+                won: 0,
+                lost: 0,
+                legsFor: 0,
+                legsAgainst: 0,
+                legDiff: 0,
+                points: 0
+            }));
+
+            group.matches.forEach(m => {
+                const s1 = parseInt(m.p1Score);
+                const s2 = parseInt(m.p2Score);
+                if (!isNaN(s1) && !isNaN(s2)) {
+                    const p1Stat = standings[m.p1Index];
+                    const p2Stat = standings[m.p2Index];
+
+                    if (p1Stat && p2Stat) {
+                        p1Stat.played++;
+                        p2Stat.played++;
+                        p1Stat.legsFor += s1;
+                        p1Stat.legsAgainst += s2;
+                        p2Stat.legsFor += s2;
+                        p2Stat.legsAgainst += s1;
+
+                        if (s1 > s2 || m.winner === 1) {
+                            p1Stat.won++;
+                            p1Stat.points += 2;
+                            p2Stat.lost++;
+                        } else if (s2 > s1 || m.winner === 2) {
+                            p2Stat.won++;
+                            p2Stat.points += 2;
+                            p1Stat.lost++;
+                        }
+                    }
+                }
+            });
+
+            standings.forEach(s => {
+                s.legDiff = s.legsFor - s.legsAgainst;
+            });
+
+            standings.sort((a, b) => {
+                if (b.points !== a.points) return b.points - a.points;
+                if (b.legDiff !== a.legDiff) return b.legDiff - a.legDiff;
+                return b.legsFor - a.legsFor;
+            });
+
+            return standings;
+        }
+
+        function loadGroupMatch(groupIdx, matchIdx) {
+            const group = groups[groupIdx];
+            if (!group) return;
+            const match = group.matches[matchIdx];
+            if (!match) return;
+
+            activeGroupMatchRef = { groupIndex: groupIdx, matchIndex: matchIdx };
+            activeBracketMatchId = null;
+
+            gameState.p1Name = match.p1Name;
+            gameState.p2Name = match.p2Name;
+            config.matchTitle = `${group.name} Match: ${match.p1Name} vs ${match.p2Name}`;
+
+            const gSettings = roundSettings.group || { startingScore: 501, legs: 3, sets: 1 };
+            config.startingScore = gSettings.startingScore;
+            config.legsPerSet = gSettings.legs;
+            config.setsToWin = gSettings.sets;
+
+            match.p1Score = "0";
+            match.p2Score = "0";
+            match.winner = null;
+
+            remoteLoadModalOpen = false;
+            executeReset();
+        }
+
+        function advanceGroupsToKnockout() {
+            if (groups.length === 0) return;
+
+            const numGroups = groups.length;
+            const numAdvancing = numGroups * 2;
+            
+            // Determine bracket size (smallest power of 2 >= numAdvancing, min 4, max 64)
+            let targetSize = 4;
+            if (numAdvancing > 32) targetSize = 64;
+            else if (numAdvancing > 16) targetSize = 32;
+            else if (numAdvancing > 8) targetSize = 16;
+            else if (numAdvancing > 4) targetSize = 8;
+            else targetSize = 4;
+
+            tournamentSize = targetSize;
+            tournament = generateTournament(targetSize);
+
+            let roundKey = 'semi';
+            if (targetSize === 64) roundKey = 'r64';
+            else if (targetSize === 32) roundKey = 'r32';
+            else if (targetSize === 16) roundKey = 'r16';
+            else if (targetSize === 8) roundKey = 'quarter';
+
+            const r1Matches = tournament.filter(m => m.roundKey === roundKey);
+
+            // Clear R1 matches
+            r1Matches.forEach(m => {
+                m.p1 = '';
+                m.p2 = '';
+                m.p1Score = '';
+                m.p2Score = '';
+                m.winner = null;
+            });
+
+            // Extract group winners (#1) and runners-up (#2) based on current standings
+            const qualified = groups.map(g => {
+                const standings = calculateGroupStandings(g);
+                return {
+                    groupName: g.name,
+                    winner: standings[0] ? standings[0].name : '',
+                    runnerUp: standings[1] ? standings[1].name : ''
+                };
+            });
+
+            // Darts for Windows (WDF Standard) Seeding Map:
+            // Maps Group Winners to opposite Group Runners-Up ensuring Seeds anchor opposite ends of the bracket.
+            let winnerOrder = [];
+            let runnerOrder = [];
+
+            if (numGroups === 2) {
+                // 2 Groups (4-player bracket)
+                winnerOrder = [0, 1];
+                runnerOrder = [1, 0];
+            } else if (numGroups === 4) {
+                // 4 Groups (8-player bracket: DfW G1(W) vs G2(RU), G4(W) vs G3(RU), G3(W) vs G4(RU), G2(W) vs G1(RU))
+                winnerOrder = [0, 3, 2, 1];
+                runnerOrder = [1, 2, 3, 0];
+            } else if (numGroups === 8) {
+                // 8 Groups (16-player bracket: DfW standard 8-group seeding pattern)
+                winnerOrder = [0, 7, 4, 3, 2, 5, 6, 1];
+                runnerOrder = [1, 6, 5, 2, 3, 4, 7, 0];
+            } else if (numGroups === 16) {
+                // 16 Groups (32-player bracket: DfW standard 16-group seeding pattern)
+                winnerOrder = [0, 15, 8, 7, 4, 11, 12, 3, 2, 13, 10, 5, 6, 9, 14, 1];
+                runnerOrder = [1, 14, 9, 6, 5, 10, 13, 2, 3, 12, 11, 4, 7, 8, 15, 0];
+            } else if (numGroups === 32) {
+                // 32 Groups (64-player bracket: DfW standard 32-group seeding pattern)
+                winnerOrder = [0, 31, 16, 15, 8, 23, 24, 7, 3, 28, 19, 12, 11, 20, 27, 4, 2, 29, 18, 13, 10, 21, 26, 5, 1, 30, 17, 14, 9, 22, 25, 6];
+                runnerOrder = [1, 30, 17, 14, 9, 22, 25, 6, 2, 29, 18, 13, 10, 21, 26, 5, 3, 28, 19, 12, 11, 20, 27, 4, 0, 31, 16, 15, 8, 23, 24, 7];
+            } else {
+                // Fallback crossover seeding for custom group counts
+                for (let i = 0; i < numGroups; i++) {
+                    winnerOrder.push(i);
+                    runnerOrder.push((i + 1) % numGroups);
+                }
+            }
+
+            // Seed qualifying players into Round 1 matches
+            winnerOrder.forEach((gIdxWinner, matchIdx) => {
+                if (r1Matches[matchIdx] && qualified[gIdxWinner]) {
+                    r1Matches[matchIdx].p1 = qualified[gIdxWinner].winner;
+                }
+                const gIdxRunner = runnerOrder[matchIdx];
+                if (r1Matches[matchIdx] && qualified[gIdxRunner]) {
+                    r1Matches[matchIdx].p2 = qualified[gIdxRunner].runnerUp;
+                }
+            });
+
+            config.bracketActiveTab = 'bracket';
+            render();
+            syncToRemote();
+            toggleAlert(true, `Top 2 players from all ${groups.length} groups (${numAdvancing} qualified players) have been seeded into the ${targetSize}-Player Knockout Bracket using Darts for Windows (WDF) seeding!`);
+        }
+
+        function generateTournament(numPlayers) {
+            const roundsConfig = [
+                { count: 32, key: 'r64', name: 'Round of 64' },
+                { count: 16, key: 'r32', name: 'Round of 32' },
+                { count: 8, key: 'r16', name: 'Round of 16' },
+                { count: 4, key: 'quarter', name: 'Quarter Final' },
+                { count: 2, key: 'semi', name: 'Semi Final' },
+                { count: 1, key: 'final', name: 'Championship Final' }
+            ];
+
+            const activeRounds = roundsConfig.filter(r => r.count < numPlayers);
+
+            let matchId = 0;
+            const roundMatches = [];
+            const allMatches = [];
+
+            activeRounds.forEach(r => {
+                const currentRoundMatches = [];
+                for (let i = 0; i < r.count; i++) {
+                    const matchTitle = r.count > 1 ? `${r.name} ${i + 1}` : r.name;
+                    const match = {
+                        id: matchId++,
+                        round: matchTitle,
+                        roundKey: r.key,
+                        roundTitle: r.name,
+                        p1: '', p2: '',
+                        p1Score: '', p2Score: '',
+                        winner: null,
+                        nextMatch: null, nextSlot: null
+                    };
+                    currentRoundMatches.push(match);
+                    allMatches.push(match);
+                }
+                roundMatches.push(currentRoundMatches);
+            });
+
+            for (let r = 0; r < roundMatches.length - 1; r++) {
+                const currentRound = roundMatches[r];
+                const nextRound = roundMatches[r + 1];
+
+                currentRound.forEach((match, i) => {
+                    const targetMatch = nextRound[Math.floor(i / 2)];
+                    match.nextMatch = targetMatch.id;
+                    match.nextSlot = i % 2 === 0 ? 'p1' : 'p2';
+                });
+            }
+
+            return allMatches;
+        }
+
+        let tournament = generateTournament(tournamentSize);
+
+        function changeTournamentSize(newSize) {
+            const size = parseInt(newSize);
+            if (isNaN(size) || size === tournamentSize) return;
+            tournamentSize = size;
+            activeBracketMatchId = null;
+            activeGroupMatchRef = null;
+            tournament = generateTournament(size);
+            groups = generateGroups(size, 4);
+            render();
+            syncToRemote();
+        }
+
+        function exportBracketJson() {
+            const data = {
+                tournamentSize,
+                tournament,
+                groups,
+                roundSettings,
+                matchQueue,
+                activeBracketMatchId,
+                activeGroupMatchRef,
+                config: {
+                    matchTitle: config.matchTitle,
+                    footerText: config.footerText,
+                    bracketActiveTab: config.bracketActiveTab
+                }
+            };
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", `Darts_Tournament_Data_${dateStr}.json`);
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        }
+
+        function triggerBracketImport() {
+            const input = document.getElementById('bracket-import-file');
+            if (input) input.click();
+        }
+
+        function importBracketJson(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.tournamentSize) tournamentSize = data.tournamentSize;
+                    if (data.tournament) tournament = data.tournament;
+                    if (data.groups) groups = data.groups;
+                    if (data.roundSettings) roundSettings = data.roundSettings;
+                    if (data.matchQueue) matchQueue = data.matchQueue;
+                    if (data.activeBracketMatchId !== undefined) activeBracketMatchId = data.activeBracketMatchId;
+                    if (data.activeGroupMatchRef !== undefined) activeGroupMatchRef = data.activeGroupMatchRef;
+                    if (data.config) {
+                        if (data.config.matchTitle) config.matchTitle = data.config.matchTitle;
+                        if (data.config.footerText) config.footerText = data.config.footerText;
+                        if (data.config.bracketActiveTab) config.bracketActiveTab = data.config.bracketActiveTab;
+                    }
+                    render();
+                    syncToRemote();
+                    toggleAlert(true, "Tournament data loaded successfully!");
+                } catch (err) {
+                    console.error(err);
+                    toggleAlert(true, "Failed to load tournament JSON file.");
+                }
+            };
+            reader.readAsText(file);
+            input.value = '';
+        }
+
+        function exportColors() {
+            const data = {
+                colors: config.colors,
+                chromaColor: config.chromaColor
+            };
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "darts_theme.json");
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        }
+
+        function triggerImport() {
+            const input = document.getElementById('import-file');
+            if (input) input.click();
+        }
+
+        function importColors(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.chromaColor) setChroma(data.chromaColor);
+                    if (data.colors) {
+                        Object.keys(data.colors).forEach(key => {
+                            updateConfig('color-' + key, data.colors[key]);
+                        });
+                    }
+                    render();
+                    toggleAlert(true, "Theme loaded successfully");
+                } catch (err) {
+                    console.error(err);
+                    toggleAlert(true, "Failed to load theme file");
+                }
+            };
+            reader.readAsText(file);
+            input.value = '';
+        }
+
+        function exportBracketToExcel() {
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const fileName = `Darts_Tournament_Bracket_${dateStr}.xlsx`;
+
+            if (typeof XLSX !== 'undefined') {
+                const excelData = [
+                    ["Round", "Match ID", "Player 1", "P1 Score", "P2 Score", "Player 2", "Winner", "Next Round Match"]
+                ];
+
+                tournament.forEach(m => {
+                    let winnerName = "-";
+                    if (m.winner === 1) winnerName = m.p1;
+                    else if (m.winner === 2) winnerName = m.p2;
+
+                    excelData.push([
+                        m.round,
+                        `Match #${m.id + 1}`,
+                        m.p1 || "",
+                        m.p1Score !== undefined ? m.p1Score : "",
+                        m.p2Score !== undefined ? m.p2Score : "",
+                        m.p2 || "",
+                        winnerName,
+                        m.nextMatch !== null ? `Match #${m.nextMatch + 1}` : "Final Winner"
+                    ]);
+                });
+
+                const worksheet = XLSX.utils.aoa_to_sheet(excelData);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Tournament Results");
+
+                const columnWidths = excelData[0].map((_, colIdx) => {
+                    return Math.max(...excelData.map(row => (row[colIdx] ? row[colIdx].toString().length : 0))) + 4;
+                });
+                worksheet['!cols'] = columnWidths.map(w => ({ wch: w }));
+
+                XLSX.writeFile(workbook, fileName);
+            } else {
+                let csvContent = "\uFEFFRound,Match ID,Player 1,P1 Score,P2 Score,Player 2,Winner,Next Match\n";
+                tournament.forEach(m => {
+                    let winnerName = "-";
+                    if (m.winner === 1) winnerName = m.p1;
+                    else if (m.winner === 2) winnerName = m.p2;
+
+                    csvContent += `"${m.round}","Match #${m.id + 1}","${m.p1 || ''}","${m.p1Score || ''}","${m.p2Score || ''}","${m.p2 || ''}","${winnerName}","${m.nextMatch !== null ? 'Match #' + (m.nextMatch + 1) : 'Final'}"\n`;
+                });
+
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement("a");
+                const url = URL.createObjectURL(blob);
+                link.setAttribute("href", url);
+                link.setAttribute("download", `Darts_Tournament_Bracket_${dateStr}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+
+        function listenToRemoteRoom() {
+            try {
+                if (mqttClient) {
+                    mqttClient.end();
+                }
+
+                remoteConnected = false;
+                mqttTopic = 'neon-darts-sync/room/' + roomCode;
+                
+                mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+
+                mqttClient.on('connect', () => {
+                    mqttClient.subscribe(mqttTopic);
+                    remoteConnected = true;
+                    render();
+                    
+                    if (!isRemoteMode) {
+                        syncToRemote();
+                    }
+                });
+
+                mqttClient.on('message', (topic, message) => {
+                    if (topic === mqttTopic) {
+                        try {
+                            const data = JSON.parse(message.toString());
+                            if (data.sender === myClientId) return;
+
+                            if (data.gameState) gameState = data.gameState;
+                            if (data.config) config = data.config;
+                            if (data.inputBuffer !== undefined) inputBuffer = data.inputBuffer;
+                            if (data.tournament) tournament = data.tournament;
+                            if (data.groups) groups = data.groups;
+                            if (data.activeBracketMatchId !== undefined) activeBracketMatchId = data.activeBracketMatchId;
+                            if (data.activeGroupMatchRef !== undefined) activeGroupMatchRef = data.activeGroupMatchRef;
+                            if (data.tournamentSize) tournamentSize = data.tournamentSize;
+                            if (data.roundSettings) roundSettings = data.roundSettings;
+                            if (data.matchQueue) matchQueue = data.matchQueue;
+                            render();
+                        } catch(e) {
+                            console.error("MQTT parse error", e);
+                        }
+                    }
+                });
+
+                mqttClient.on('error', (err) => {
+                    console.warn("MQTT WebSockets restricted or failed:", err);
+                    remoteConnected = false;
+                    render();
+                });
+                
+                mqttClient.on('close', () => {
+                    remoteConnected = false;
+                    render();
+                });
+            } catch(err) {
+                console.warn("WebSocket connections restricted in this environment:", err);
+                remoteConnected = false;
+            }
+        }
+
+        function listenToLocalBroadcast() {
+            if (localChannel) {
+                try { localChannel.close(); } catch(e){}
+            }
+            if (window.BroadcastChannel) {
+                try {
+                    localChannel = new BroadcastChannel('darts_local_sync_' + roomCode);
+                    localChannel.onmessage = (event) => {
+                        const data = event.data;
+                        if (!data || data.sender === myClientId) return;
+
+                        if (data.gameState) gameState = data.gameState;
+                        if (data.config) config = data.config;
+                        if (data.inputBuffer !== undefined) inputBuffer = data.inputBuffer;
+                        if (data.tournament) tournament = data.tournament;
+                        if (data.groups) groups = data.groups;
+                        if (data.activeBracketMatchId !== undefined) activeBracketMatchId = data.activeBracketMatchId;
+                        if (data.activeGroupMatchRef !== undefined) activeGroupMatchRef = data.activeGroupMatchRef;
+                        if (data.tournamentSize) tournamentSize = data.tournamentSize;
+                        if (data.roundSettings) roundSettings = data.roundSettings;
+                        if (data.matchQueue) matchQueue = data.matchQueue;
+                        render();
+                    };
+                } catch(e) {}
+            }
+        }
+
+        function syncToRemote() {
+            const syncPayload = {
+                sender: myClientId,
+                gameState,
+                config,
+                inputBuffer,
+                tournament,
+                groups,
+                activeBracketMatchId,
+                activeGroupMatchRef,
+                tournamentSize,
+                roundSettings,
+                matchQueue,
+                lastUpdated: Date.now()
+            };
+
+            if (mqttClient && mqttClient.connected) {
+                try {
+                    mqttClient.publish(mqttTopic, JSON.stringify(syncPayload), { retain: true });
+                } catch(e) {
+                    console.warn("MQTT publish failed:", e);
+                }
+            }
+
+            if (localChannel) {
+                try {
+                    localChannel.postMessage(syncPayload);
+                } catch(e) {}
+            }
+        }
+
+        function setupKeyboard() {
+            document.addEventListener('keydown', (e) => {
+                const els = {
+                    settingsModal: document.getElementById('settings-modal'),
+                    confirmModal: document.getElementById('confirm-modal'),
+                    alertModal: document.getElementById('alert-modal'),
+                    remoteModal: document.getElementById('remote-modal')
+                };
+                const isSettingsOpen = els.settingsModal && !els.settingsModal.classList.contains('hidden');
+                const isConfirmOpen = els.confirmModal && !els.confirmModal.classList.contains('hidden');
+                const isAlertOpen = els.alertModal && !els.alertModal.classList.contains('hidden');
+                const isRemoteOpen = els.remoteModal && !els.remoteModal.classList.contains('hidden');
+                
+                if (isSettingsOpen || isConfirmOpen || isAlertOpen || isRemoteOpen) return;
+
+                const isTyping = e.target.tagName === 'INPUT' || 
+                                 e.target.tagName === 'TEXTAREA' || 
+                                 e.target.isContentEditable;
+
+                if (isTyping) return;
+
+                if (e.key >= '0' && e.key <= '9') handleNumClick(e.key);
+                else if (e.key === 'Enter') { e.preventDefault(); handleEnter(); }
+                else if (e.key === 'Backspace') handleBackspace();
+                else if (e.key.toLowerCase() === 'c' || e.key === 'Escape') clearInput();
+                else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                    e.preventDefault();
+                    handleUndo();
+                }
+            });
+        }
+
+        function openPopout() {
+            if (popupWindow && !popupWindow.closed) {
+                popupWindow.focus();
+                return;
+            }
+
+            popupWindow = window.open('', 'DartsOverlayPopout', 'width=980,height=520,toolbar=no,location=no,status=no,menubar=no,scrollbars=no,resizable=yes');
+
+            if (!popupWindow) {
+                render();
+                return;
+            }
+
+            setupPopupWindowDocument();
+            render();
+        }
+
+        function focusPopout() {
+            if (popupWindow && !popupWindow.closed) {
+                popupWindow.focus();
+            } else {
+                openPopout();
+            }
+        }
+
+        function setupPopupWindowDocument() {
+            if (!popupWindow) return;
+
+            const doc = popupWindow.document;
+            doc.open();
+            doc.write(`
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Darts Scoreboard Overlay</title>
+                    <script src="https://cdn.tailwindcss.com"><\/script>
+                    <script src="https://unpkg.com/lucide@latest"><\/script>
+                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+                    <style>
+                        body { font-family: 'Inter', sans-serif; margin: 0; padding: 1.5rem; min-height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+                        .font-mono { font-family: 'Roboto Mono', monospace; }
+                        
+                        :root {
+                            --indicator-color: ${hexToRgb(config.colors.indicator)};
+                        }
+
+                        @keyframes pulse-ring {
+                            0% { box-shadow: 0 0 0 0 rgba(var(--indicator-color), 0.7); }
+                            70% { box-shadow: 0 0 0 10px rgba(var(--indicator-color), 0); }
+                            100% { box-shadow: 0 0 0 0 rgba(var(--indicator-color), 0); }
+                        }
+                        .animate-pulse-ring {
+                            animation: pulse-ring 2s infinite;
+                        }
+
+                        [contenteditable="true"] {
+                            outline: none;
+                            cursor: text;
+                            border-bottom: 1px solid transparent;
+                            transition: all 0.2s;
+                        }
+                        [contenteditable="true"]:hover {
+                            background-color: rgba(255, 255, 255, 0.1);
+                            border-bottom-color: rgba(255, 255, 255, 0.3);
+                            border-radius: 4px;
+                        }
+                        [contenteditable="true"]:focus {
+                            background-color: rgba(0, 0, 0, 0.2);
+                            border-bottom-color: #10b981;
+                            border-radius: 4px;
+                        }
+                    </style>
+                </head>
+                <body id="popout-body" style="background-color: ${config.chromaColor};">
+                    <div id="popout-container" class="w-full max-w-3xl mx-auto"></div>
+                </body>
+                </html>
+            `);
+            doc.close();
+
+            popupWindow.addEventListener('beforeunload', () => {
+                popupWindow = null;
+                setTimeout(() => { render(); }, 100);
+            });
+        }
+
+        function openBracketPopout() {
+            if (bracketPopupWindow && !bracketPopupWindow.closed) {
+                bracketPopupWindow.focus();
+                return;
+            }
+
+            bracketPopupWindow = window.open('', 'DartsBracketPopout', 'width=1200,height=750,toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes');
+
+            if (!bracketPopupWindow) {
+                toggleAlert(true, "Pop-up blocked! Please allow pop-ups for this site in your browser.");
+                return;
+            }
+
+            setupBracketPopupWindowDocument();
+            renderBracketPopout();
+        }
+
+        function focusBracketPopout() {
+            if (bracketPopupWindow && !bracketPopupWindow.closed) {
+                bracketPopupWindow.focus();
+            } else {
+                openBracketPopout();
+            }
+        }
+
+        function setupBracketPopupWindowDocument() {
+            if (!bracketPopupWindow) return;
+
+            const doc = bracketPopupWindow.document;
+            doc.open();
+            doc.write(`
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Darts Tournament Bracket & Group Stage</title>
+                    <script src="https://cdn.tailwindcss.com"><\/script>
+                    <script src="https://unpkg.com/lucide@latest"><\/script>
+                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+                    <style>
+                        body { font-family: 'Inter', sans-serif; background-color: #020617; color: white; margin: 0; padding: 1.5rem; min-height: 100vh; }
+                        .font-mono { font-family: 'Roboto Mono', monospace; }
+                        .custom-scrollbar::-webkit-scrollbar { height: 10px; width: 10px; }
+                        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.8); border-radius: 6px; }
+                        .custom-scrollbar::-webkit-scrollbar-thumb { background: #059669; border-radius: 6px; }
+                        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #10b981; }
+                        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: #059669 rgba(15, 23, 42, 0.8); }
+                    </style>
+                </head>
+                <body class="bg-slate-950 text-white">
+                    <div id="bracket-popout-header" class="mb-6 pb-4 border-b border-slate-800 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2.5 bg-emerald-900/40 text-emerald-400 rounded-xl border border-emerald-500/20">
+                                <i data-lucide="git-merge" class="w-6 h-6"></i>
+                            </div>
+                            <div>
+                                <h1 class="text-xl font-extrabold text-white uppercase tracking-wider" id="bracket-popout-title">${config.footerText || 'Tournament Bracket'}</h1>
+                                <p class="text-xs text-slate-400" id="bracket-popout-subtitle">${tournamentSize}-Player Tournament Stage</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="bracket-popout-container" class="w-full"></div>
+                </body>
+                </html>
+            `);
+            doc.close();
+
+            bracketPopupWindow.addEventListener('beforeunload', () => {
+                bracketPopupWindow = null;
+                setTimeout(() => { render(); }, 100);
+            });
+        }
+
+        function renderBracketPopout() {
+            if (bracketPopupWindow && !bracketPopupWindow.closed) {
+                const doc = bracketPopupWindow.document;
+                const activeEl = doc.activeElement;
+                const activeId = (activeEl && activeEl.id) ? activeEl.id : null;
+                let selectionStart = null;
+                let selectionEnd = null;
+
+                if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+                    try {
+                        selectionStart = activeEl.selectionStart;
+                        selectionEnd = activeEl.selectionEnd;
+                    } catch(e) {}
+                }
+
+                const container = doc.getElementById('bracket-popout-container');
+                const titleEl = doc.getElementById('bracket-popout-title');
+                const subTitleEl = doc.getElementById('bracket-popout-subtitle');
+                if (titleEl) {
+                    titleEl.innerText = config.footerText || 'Tournament Bracket';
+                }
+                if (subTitleEl) {
+                    subTitleEl.innerText = `${tournamentSize}-Player Tournament Stage`;
+                }
+                if (container) {
+                    if (config.bracketActiveTab === 'groups') {
+                        container.innerHTML = getGroupStageHTML(true);
+                    } else {
+                        container.innerHTML = getVisualBracketHTML(true);
+                    }
+                }
+                if (bracketPopupWindow.lucide) {
+                    try { bracketPopupWindow.lucide.createIcons(); } catch(e){}
+                }
+
+                if (activeId) {
+                    const el = doc.getElementById(activeId);
+                    if (el) {
+                        el.focus();
+                        if (selectionStart !== null && selectionEnd !== null && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                            try {
+                                el.setSelectionRange(selectionStart, selectionEnd);
+                            } catch(e) {}
+                        }
+                    }
+                }
+            }
+        }
+
+        function handleNumClick(num) {
+            if (gameState.matchWinner) return;
+            if (inputBuffer.length >= 3) return;
+            
+            const newVal = parseInt(inputBuffer + num);
+            if (newVal > 180) return;
+            
+            inputBuffer += num;
+            render();
+            syncToRemote();
+        }
+
+        function handleBackspace() {
+            inputBuffer = inputBuffer.slice(0, -1);
+            render();
+            syncToRemote();
+        }
+
+        function clearInput() {
+            inputBuffer = "";
+            render();
+            syncToRemote();
+        }
+
+        function handleEnter() {
+            if (!inputBuffer) return;
+            const scoreThrown = parseInt(inputBuffer);
+            if (isNaN(scoreThrown)) return;
+            if (scoreThrown > 180) {
+                toggleAlert(true, "Score cannot exceed 180");
+                inputBuffer = "";
+                render();
+                syncToRemote();
+                return;
+            }
+
+            undoStack.push(JSON.parse(JSON.stringify(gameState)));
+            
+            const isP1 = gameState.currentPlayer === 1;
+            const currentScore = isP1 ? gameState.p1Score : gameState.p2Score;
+            const newScore = currentScore - scoreThrown;
+
+            gameState.bust = false;
+            gameState.lastTurnScore = scoreThrown;
+
+            if (isP1) {
+                gameState.p1DartsThrown += 3;
+            } else {
+                gameState.p2DartsThrown += 3;
+            }
+
+            if (newScore < 0 || newScore === 1) {
+                gameState.bust = true;
+                gameState.currentPlayer = isP1 ? 2 : 1;
+            } else if (newScore === 0) {
+                if (isP1) {
+                    gameState.p1TotalScored += currentScore;
+                    gameState.p1Legs++;
+                } else {
+                    gameState.p2TotalScored += currentScore;
+                    gameState.p2Legs++;
+                }
+                
+                gameState.p1Score = config.startingScore;
+                gameState.p2Score = config.startingScore;
+
+                const setWonByP1 = isP1 && gameState.p1Legs >= config.legsPerSet;
+                const setWonByP2 = !isP1 && gameState.p2Legs >= config.legsPerSet;
+
+                if (setWonByP1) {
+                    gameState.p1Sets++;
+                } else if (setWonByP2) {
+                    gameState.p2Sets++;
+                }
+
+                if (gameState.p1Sets >= config.setsToWin) {
+                    gameState.matchWinner = 1;
+                } else if (gameState.p2Sets >= config.setsToWin) {
+                    gameState.matchWinner = 2;
+                }
+
+                if (!gameState.matchWinner && (setWonByP1 || setWonByP2)) {
+                    gameState.p1Legs = 0;
+                    gameState.p2Legs = 0;
+                }
+
+                if (!gameState.matchWinner) {
+                    gameState.startingPlayer = gameState.startingPlayer === 1 ? 2 : 1;
+                    gameState.currentPlayer = gameState.startingPlayer;
+                }
+            } else {
+                if (isP1) {
+                    gameState.p1TotalScored += scoreThrown;
+                    gameState.p1Score = newScore;
+                } else {
+                    gameState.p2TotalScored += scoreThrown;
+                    gameState.p2Score = newScore;
+                }
+                gameState.currentPlayer = isP1 ? 2 : 1;
+            }
+
+            syncActiveMatchToBracket();
+            inputBuffer = "";
+            render();
+            syncToRemote();
+        }
+
+        function handleUndo() {
+            if (undoStack.length === 0) return;
+            gameState = undoStack.pop();
+            syncActiveMatchToBracket();
+            render();
+            syncToRemote();
+        }
+
+        function resetMatch() { toggleConfirm(true); }
+
+        function executeReset() {
+            toggleConfirm(false);
+            toggleSettings(false);
+            gameState = {
+                p1Name: gameState.p1Name,
+                p2Name: gameState.p2Name,
+                p1Score: config.startingScore,
+                p2Score: config.startingScore,
+                p1Legs: 0, 
+                p2Legs: 0, 
+                p1Sets: 0, 
+                p2Sets: 0,
+                p1TotalScored: 0,
+                p1DartsThrown: 0,
+                p2TotalScored: 0,
+                p2DartsThrown: 0,
+                startingPlayer: gameState.startingPlayer,
+                currentPlayer: gameState.startingPlayer,
+                lastTurnScore: null,
+                matchWinner: null,
+                bust: false
+            };
+            undoStack = [];
+            inputBuffer = "";
+            syncActiveMatchToBracket();
+            render();
+            syncToRemote();
+        }
+
+        function updatePlayerName(playerNum, value) {
+            const val = value.trim();
+            if (playerNum === 1) gameState.p1Name = val;
+            else gameState.p2Name = val;
+            
+            syncActiveMatchToBracket();
+            render();
+            syncToRemote();
+        }
+
+        function setPlayer(num) {
+            gameState.startingPlayer = num;
+            gameState.currentPlayer = num;
+            render();
+            syncToRemote();
+        }
+
+        function setQuickTab(tab) {
+            config.activeQuickTab = tab;
+            render();
+        }
+
+        function setBracketTab(tab) {
+            config.bracketActiveTab = tab;
+            render();
+        }
+
+        function updateRoundSetting(roundKey, field, value) {
+            if (!roundSettings[roundKey]) {
+                roundSettings[roundKey] = { startingScore: 501, legs: 3, sets: 1 };
+            }
+            roundSettings[roundKey][field] = parseInt(value);
+            syncToRemote();
+        }
+
+        function addMatchToQueue() {
+            const p1 = queueInputs.p1.trim();
+            const p2 = queueInputs.p2.trim();
+            if (p1 && p2) {
+                matchQueue.push({ p1, p2 });
+                queueInputs.p1 = '';
+                queueInputs.p2 = '';
+                render();
+                syncToRemote();
+            } else {
+                toggleAlert(true, "Please enter names for both players.");
+            }
+        }
+
+        function addRemoteMatchToQueue() {
+            const p1 = queueInputs.remoteP1.trim();
+            const p2 = queueInputs.remoteP2.trim();
+            if (p1 && p2) {
+                matchQueue.push({ p1, p2 });
+                queueInputs.remoteP1 = '';
+                queueInputs.remoteP2 = '';
+                render();
+                syncToRemote();
+            } else {
+                toggleAlert(true, "Please enter names for both players.");
+            }
+        }
+
+        function removeFromQueue(index) {
+            matchQueue.splice(index, 1);
+            render();
+        }
+
+        function loadFromQueue(index) {
+            const match = matchQueue[index];
+            gameState.p1Name = match.p1;
+            gameState.p2Name = match.p2;
+            matchQueue.splice(index, 1);
+            activeBracketMatchId = null;
+            remoteLoadModalOpen = false;
+            executeReset();
+        }
+
+        function updateTournament(matchId, slot, value) {
+            tournament[matchId][slot] = value;
+            if (activeBracketMatchId === matchId) {
+                if (slot === 'p1') gameState.p1Name = value;
+                if (slot === 'p2') gameState.p2Name = value;
+            }
+            syncToRemote();
+            if (popupWindow && !popupWindow.closed) {
+                renderTvOverlay(true);
+            }
+        }
+
+        function updateTournamentScore(matchId, slot, value) {
+            tournament[matchId][slot] = value;
+            if (activeBracketMatchId === matchId) {
+                const val = parseInt(value) || 0;
+                if (config.setsToWin > 1) {
+                    if (slot === 'p1Score') gameState.p1Sets = val;
+                    if (slot === 'p2Score') gameState.p2Sets = val;
+                } else {
+                    if (slot === 'p1Score') gameState.p1Legs = val;
+                    if (slot === 'p2Score') gameState.p2Legs = val;
+                }
+            }
+            syncToRemote();
+            if (popupWindow && !popupWindow.closed) {
+                renderTvOverlay(true);
+            }
+        }
+
+        function advanceTournament(matchId, slot) {
+            const match = tournament[matchId];
+            const winnerName = match[slot];
+            if (!winnerName.trim()) {
+                toggleAlert(true, "Please enter a player name before advancing them.");
+                return;
+            }
+            match.winner = slot === 'p1' ? 1 : 2;
+            if (match.nextMatch !== null) {
+                tournament[match.nextMatch][match.nextSlot] = winnerName;
+            }
+            if (activeBracketMatchId === matchId) {
+                gameState.matchWinner = match.winner;
+            }
+            render();
+            syncToRemote();
+        }
+
+        function syncActiveMatchToBracket() {
+            if (activeBracketMatchId === null || !tournament[activeBracketMatchId]) return;
+
+            const match = tournament[activeBracketMatchId];
+            
+            match.p1 = gameState.p1Name;
+            match.p2 = gameState.p2Name;
+
+            if (config.setsToWin > 1) {
+                match.p1Score = gameState.p1Sets;
+                match.p2Score = gameState.p2Sets;
+            } else {
+                match.p1Score = gameState.p1Legs;
+                match.p2Score = gameState.p2Legs;
+            }
+
+            if (gameState.matchWinner) {
+                match.winner = gameState.matchWinner;
+                const winnerName = gameState.matchWinner === 1 ? match.p1 : match.p2;
+                if (match.nextMatch !== null && winnerName.trim()) {
+                    tournament[match.nextMatch][match.nextSlot] = winnerName;
+                }
+            } else {
+                match.winner = null;
+            }
+        }
+
+        function loadTournamentMatch(matchId) {
+            const match = tournament[matchId];
+            if (!match) return;
+
+            if (!match.p1 || !match.p1.trim()) match.p1 = "Player 1";
+            if (!match.p2 || !match.p2.trim()) match.p2 = "Player 2";
+
+            activeBracketMatchId = matchId;
+            gameState.p1Name = match.p1;
+            gameState.p2Name = match.p2;
+            config.matchTitle = match.round;
+
+            const rSettings = roundSettings[match.roundKey] || { startingScore: 501, legs: 3, sets: 1 };
+            config.startingScore = rSettings.startingScore;
+            config.legsPerSet = rSettings.legs;
+            config.setsToWin = rSettings.sets;
+
+            match.p1Score = "0";
+            match.p2Score = "0";
+            match.winner = null;
+
+            remoteLoadModalOpen = false;
+            executeReset();
+        }
+
+        function clearBracket() {
+            activeBracketMatchId = null;
+            activeGroupMatchRef = null;
+            tournament.forEach(m => { 
+                m.p1 = ''; 
+                m.p2 = ''; 
+                m.p1Score = ''; 
+                m.p2Score = ''; 
+                m.winner = null; 
+            });
+            render();
+            syncToRemote();
+        }
+
+        function toggleModal(modal, panel, show) {
+            if (!modal || !panel) return;
+            if (show) {
+                modal.classList.remove('hidden');
+                setTimeout(() => {
+                    modal.classList.remove('opacity-0');
+                    panel.classList.remove('scale-95');
+                }, 10);
+            } else {
+                modal.classList.add('opacity-0');
+                panel.classList.add('scale-95');
+                setTimeout(() => modal.classList.add('hidden'), 300);
+            }
+        }
+
+        function toggleSettings(show) { toggleModal(document.getElementById('settings-modal'), document.getElementById('settings-panel'), show); }
+        function toggleConfirm(show) { toggleModal(document.getElementById('confirm-modal'), document.getElementById('confirm-panel'), show); }
+        function toggleAlert(show, msg = "") {
+            const alertMsg = document.getElementById('alert-message');
+            if (show && msg && alertMsg) alertMsg.innerText = msg;
+            toggleModal(document.getElementById('alert-modal'), document.getElementById('alert-panel'), show);
+        }
+
+        function getRemoteUrl() {
+            const customHost = document.getElementById('custom-host-url')?.value.trim();
+            let baseUrl = "";
+            if (customHost) {
+                baseUrl = customHost.replace(/\/+$/, "");
+                if (!baseUrl.startsWith('http')) baseUrl = 'https://' + baseUrl;
+            } else if (window.location.protocol === 'file:') {
+                baseUrl = "http://192.168.1.X:8000"; 
+            } else {
+                baseUrl = window.location.href.split('?')[0].split('#')[0];
+            }
+            return `${baseUrl}?room=${roomCode}&mode=remote`;
+        }
+
+        function updateRemoteQrCode() {
+            const remoteUrl = getRemoteUrl();
+            const qrContainer = document.getElementById('qrcode');
+            if (!qrContainer) return;
+            qrContainer.innerHTML = '';
+            
+            if (typeof QRCode !== 'undefined') {
+                qrCodeInstance = new QRCode(qrContainer, {
+                    text: remoteUrl,
+                    width: 160,
+                    height: 160,
+                    colorDark: "#020617",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+            }
+        }
+
+        function toggleRemoteModal(show) {
+            const modal = document.getElementById('remote-modal');
+            const panel = document.getElementById('remote-panel');
+            const roomInput = document.getElementById('modal-room-code');
+
+            if (show) {
+                if (roomInput) roomInput.value = roomCode;
+                const isFileProtocol = window.location.protocol === 'file:';
+                const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                
+                const warningEl = document.getElementById('file-protocol-warning');
+                const warningText = document.getElementById('warning-text');
+                
+                if (warningEl && warningText) {
+                    if (isFileProtocol) {
+                        warningText.innerHTML = `Opened as a local file (<b>file://</b>). Your phone cannot connect to this. You must run an HTTP server (e.g. VS Code Live Server). Enter your network IP and port above (e.g. <b>http://192.168.1.50:5500</b>).`;
+                        warningEl.classList.remove('hidden');
+                    } else if (isLocalhost) {
+                        warningText.innerHTML = `Running on <b>localhost</b>. Phones cannot resolve localhost. Enter your PC's network IP above instead (e.g. <b>http://192.168.1.50:${window.location.port || '8000'}</b>).`;
+                        warningEl.classList.remove('hidden');
+                    } else {
+                        warningEl.classList.add('hidden');
+                    }
+                }
+                updateRemoteQrCode();
+            }
+            toggleModal(modal, panel, show);
+        }
+
+        function copyRoomLink() {
+            const remoteUrl = getRemoteUrl();
+            const tempInput = document.createElement('input');
+            tempInput.value = remoteUrl;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            toggleAlert(true, "Remote controller link copied: " + remoteUrl);
+        }
+
+        function joinRoom(newCode) {
+            newCode = newCode.trim().toUpperCase();
+            if (!newCode || newCode === roomCode) return;
+            
+            roomCode = newCode;
+            
+            const url = new URL(window.location);
+            url.searchParams.set('room', roomCode);
+            window.history.replaceState({}, '', url);
+
+            remoteConnected = false;
+            listenToRemoteRoom();
+            listenToLocalBroadcast();
+            
+            const modalRoom = document.getElementById('modal-room-code');
+            const remoteModal = document.getElementById('remote-modal');
+            if (remoteModal && !remoteModal.classList.contains('hidden') && modalRoom) {
+                modalRoom.value = roomCode;
+                updateRemoteQrCode();
+            }
+            
+            render();
+            toggleAlert(true, `Joined room: ${roomCode}`);
+        }
+
+        function toggleRemoteMode(enable) {
+            isRemoteMode = enable;
+            render();
+            syncToRemote();
+        }
+
+        function setRemoteScale(scale) {
+            remoteScale = scale;
+            localStorage.setItem('dartsRemoteScale', scale);
+            render();
+        }
+
+        function render() {
+            const activeEl = document.activeElement;
+            const activeId = (activeEl && activeEl.id) ? activeEl.id : null;
+            let selectionStart = null;
+            let selectionEnd = null;
+
+            if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+                try {
+                    selectionStart = activeEl.selectionStart;
+                    selectionEnd = activeEl.selectionEnd;
+                } catch(e) {}
+            }
+
+            const mainContent = document.getElementById('main-content');
+            if (mainContent) mainContent.innerHTML = '';
+            
+            const isPoppedOut = popupWindow && !popupWindow.closed;
+            
+            if (isPoppedOut) {
+                renderTvOverlay(true);
+            }
+
+            if (isRemoteMode) {
+                renderRemotePadView();
+            } else {
+                renderPopoutBanner();
+                renderOperatorConsole();
+                renderBracketSection();
+            }
+
+            if (window.lucide) {
+                lucide.createIcons();
+            }
+            
+            if (isPoppedOut && popupWindow && popupWindow.lucide) {
+                popupWindow.lucide.createIcons();
+            }
+
+            if (activeId) {
+                const el = document.getElementById(activeId);
+                if (el) {
+                    el.focus();
+                    if (selectionStart !== null && selectionEnd !== null && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                        try {
+                            el.setSelectionRange(selectionStart, selectionEnd);
+                        } catch(e) {}
+                    }
+                }
+            }
+        }
+
+        function getScoreboardHTML(isPoppedOut = true) {
+            const showSets = config.setsToWin > 1;
+            const showLegs = config.legsPerSet > 0;
+
+            const headerStyle = `background-color: ${config.colors.headerBg}; color: ${config.colors.headerText};`;
+            const playerStyle = `background-color: ${config.colors.playerBg}; color: ${config.colors.playerText};`;
+            const scoreStyle = `background-color: ${config.colors.scoreBg}; color: ${config.colors.scoreText};`;
+            const indicatorStyle = `background-color: ${config.colors.indicator}; box-shadow: 0 0 10px ${config.colors.indicator}CC;`;
+
+            const p1Check = getCheckout(gameState.p1Score);
+            const p2Check = getCheckout(gameState.p2Score);
+            const isCheckout = config.showCheckouts && ((gameState.currentPlayer === 1 && p1Check) || (gameState.currentPlayer === 2 && p2Check));
+            const hint = isCheckout && !gameState.matchWinner ? (gameState.currentPlayer === 1 ? p1Check : p2Check) : "";
+            
+            const winnerName = gameState.matchWinner === 1 ? gameState.p1Name : (gameState.matchWinner === 2 ? gameState.p2Name : null);
+
+            const p1Avg = calculateAverage(1);
+            const p2Avg = calculateAverage(2);
+
+            let p1Status = '';
+            if (gameState.matchWinner === 1) {
+                p1Status = `<div class="bg-yellow-400 text-black text-xs sm:text-sm font-black px-2 py-1 rounded uppercase tracking-widest ml-3 shadow-[0_0_15px_rgba(250,204,21,0.6)] animate-pulse">Winner</div>`;
+            } else if (gameState.currentPlayer === 1 && !gameState.matchWinner) {
+                p1Status = `<div class="tv-indicator-dot w-6 h-6 rounded-full border-2 border-white/50 animate-pulse-ring ml-3" style="${indicatorStyle}"></div>`;
+            }
+
+            let p2Status = '';
+            if (gameState.matchWinner === 2) {
+                p2Status = `<div class="bg-yellow-400 text-black text-xs sm:text-sm font-black px-2 py-1 rounded uppercase tracking-widest ml-3 shadow-[0_0_15px_rgba(250,204,21,0.6)] animate-pulse">Winner</div>`;
+            } else if (gameState.currentPlayer === 2 && !gameState.matchWinner) {
+                p2Status = `<div class="tv-indicator-dot w-6 h-6 rounded-full border-2 border-white/50 animate-pulse-ring ml-3" style="${indicatorStyle}"></div>`;
+            }
+
+            let bottomBarContent = '';
+            let bottomBarClasses = 'bg-transparent border-t-0 border-transparent h-10';
+
+            if (gameState.matchWinner) {
+                bottomBarClasses = 'bg-gradient-to-r from-yellow-500 via-yellow-400 to-yellow-500 border-t-2 border-yellow-200 h-12';
+                bottomBarContent = `<div class="text-black text-xl font-black uppercase tracking-widest drop-shadow-md py-1 animate-pulse">${winnerName} WINS THE MATCH!</div>`;
+            } else if (isCheckout) {
+                bottomBarClasses = 'bg-slate-900 border-t-2 border-emerald-500/50 h-10';
+                bottomBarContent = `<div class="text-white text-lg font-mono font-bold animate-pulse">Checkout: <span class="text-yellow-400">${hint}</span></div>`;
+            }
+
+            let gridCols = 'grid-cols-[1fr_8rem]'; 
+            if (showSets && showLegs) gridCols = 'grid-cols-[1fr_5rem_5rem_8rem]';
+            else if (showSets) gridCols = 'grid-cols-[1fr_5rem_8rem]';
+            else if (showLegs) gridCols = 'grid-cols-[1fr_5rem_8rem]';
+
+            const showSetsHeader = showSets ? '<div class="text-center">Sets</div>' : '';
+            const showLegsHeader = showLegs ? '<div class="text-center">Legs</div>' : '';
+            const footerBorderClass = (!isCheckout && !gameState.matchWinner) ? 'rounded-b-xl' : '';
+            
+            const p1SetsHtml = showSets ? '<div class="tv-style-score flex items-center justify-center font-bold text-4xl border-l border-black/20" style="' + scoreStyle + '">' + gameState.p1Sets + '</div>' : '';
+            const p1LegsHtml = showLegs ? '<div class="tv-style-score flex items-center justify-center font-bold text-4xl border-l border-black/20" style="' + scoreStyle + '">' + gameState.p1Legs + '</div>' : '';
+            const p2SetsHtml = showSets ? '<div class="tv-style-score flex items-center justify-center font-bold text-4xl border-l border-black/20" style="' + scoreStyle + '">' + gameState.p2Sets + '</div>' : '';
+            const p2LegsHtml = showLegs ? '<div class="tv-style-score flex items-center justify-center font-bold text-4xl border-l border-black/20" style="' + scoreStyle + '">' + gameState.p2Legs + '</div>' : '';
+
+            const targetWindow = 'window.opener.';
+
+            return `
+                <div class="w-full rounded-xl overflow-hidden select-none font-sans relative transition-all">
+                    <div class="tv-style-header grid ${gridCols} items-center py-2 font-bold shadow-md relative z-10 text-lg uppercase tracking-wider" style="${headerStyle}">
+                        <div class="pl-5 truncate" contenteditable="true" onblur="${targetWindow}updateConfig('matchTitle', this.innerText)">${config.matchTitle}</div>
+                        ${showSetsHeader}
+                        ${showLegsHeader}
+                        <div></div>
+                    </div>
+
+                    <div class="grid ${gridCols} border-b border-black/10">
+                        <div class="tv-style-player flex items-center justify-between px-5 py-3 relative" style="${playerStyle}">
+                            <div class="flex flex-col min-w-0">
+                                <span class="font-bold text-3xl truncate leading-tight tracking-tight outline-none" contenteditable="true" onblur="${targetWindow}updatePlayerName(1, this.innerText)">${gameState.p1Name}</span>
+                                ${config.showAverage ? `<div class="text-lg sm:text-xl font-mono font-extrabold tracking-wider mt-1 flex items-center gap-2">AVG: <span class="bg-black/10 px-2 py-0.5 rounded text-black font-black">${p1Avg}</span></div>` : ''}
+                            </div>
+                            ${p1Status}
+                        </div>
+                        ${p1SetsHtml}
+                        ${p1LegsHtml}
+                        <div class="tv-style-score flex items-center justify-center font-bold text-6xl border-l border-black/20 py-2 tracking-tighter" style="${scoreStyle}">${gameState.p1Score}</div>
+                    </div>
+
+                    <div class="grid ${gridCols}">
+                        <div class="tv-style-player flex items-center justify-between px-5 py-3 relative" style="${playerStyle}">
+                            <div class="flex flex-col min-w-0">
+                                <span class="font-bold text-3xl truncate leading-tight tracking-tight outline-none" contenteditable="true" onblur="${targetWindow}updatePlayerName(2, this.innerText)">${gameState.p2Name}</span>
+                                ${config.showAverage ? `<div class="text-lg sm:text-xl font-mono font-extrabold tracking-wider mt-1 flex items-center gap-2">AVG: <span class="bg-black/10 px-2 py-0.5 rounded text-black font-black">${p2Avg}</span></div>` : ''}
+                            </div>
+                            ${p2Status}
+                        </div>
+                        ${p2SetsHtml}
+                        ${p2LegsHtml}
+                        <div class="tv-style-score flex items-center justify-center font-bold text-6xl border-l border-black/20 py-2 tracking-tighter" style="${scoreStyle}">${gameState.p2Score}</div>
+                    </div>
+
+                    <div class="tv-style-header px-5 py-2 text-center text-sm font-bold tracking-widest uppercase shadow-inner opacity-90 outline-none transition-all duration-300 ${footerBorderClass}" style="${headerStyle}" contenteditable="true" onblur="${targetWindow}updateConfig('footerText', this.innerText)">
+                        ${config.footerText}
+                    </div>
+
+                    <div class="w-full flex items-center justify-center transition-all duration-300 ${bottomBarClasses}">
+                        ${bottomBarContent}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTvOverlay(isPoppedOut = true) {
+            if (isPoppedOut && popupWindow && !popupWindow.closed) {
+                const popoutContainer = popupWindow.document.getElementById('popout-container');
+                if (popoutContainer) {
+                    popoutContainer.innerHTML = getScoreboardHTML(true);
+                }
+                if (popupWindow.document && popupWindow.document.body) {
+                    popupWindow.document.body.style.backgroundColor = config.chromaColor;
+                }
+                if (popupWindow.lucide) {
+                    try { popupWindow.lucide.createIcons(); } catch(e){}
+                }
+            }
+        }
+
+        function renderPopoutBanner() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) return;
+
+            const isPoppedOut = popupWindow && !popupWindow.closed;
+            
+            const statusDot = isPoppedOut 
+                ? `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>` 
+                : `<span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>`;
+
+            const remoteStatusDot = remoteConnected 
+                ? `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>` 
+                : `<span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>`;
+
+            const statusText = isPoppedOut 
+                ? `Scoreboard Active in Popout Window` 
+                : `Scoreboard Window Not Open`;
+
+            const actionButton = isPoppedOut 
+                ? `<button onclick="focusPopout()" class="w-full md:w-auto bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-colors">
+                    <i data-lucide="maximize-2" class="w-4 h-4"></i> Focus Popout
+                   </button>`
+                : `<button onclick="openPopout()" class="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-colors shadow-lg shadow-emerald-950/50">
+                    <i data-lucide="external-link" class="w-4 h-4"></i> Launch Popout
+                   </button>`;
+
+            const html = `
+                <div class="flex-none w-full max-w-6xl mx-auto mb-1 bg-slate-900 border-2 border-emerald-500/80 rounded-2xl p-4 md:p-6 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div class="flex items-center gap-3 w-full md:w-auto">
+                        <div class="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-xl text-emerald-400 animate-pulse">
+                            <i data-lucide="monitor" class="w-7 h-7"></i>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                ${statusDot}
+                                <h3 class="text-base md:text-lg font-bold text-white uppercase tracking-wider">${statusText}</h3>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-0.5">Live updates sync instantly to your external display or capture window.</p>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+                        <div class="bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-xl flex items-center gap-2" title="Edit and set room code">
+                            ${remoteStatusDot}
+                            <span class="text-[10px] text-slate-400 font-bold uppercase flex-none">Room:</span>
+                            <input type="text" id="banner-room-input" value="${roomCode}" onkeyup="if(event.key==='Enter') joinRoom(this.value)" onfocus="this.select()" class="bg-transparent text-xs font-mono font-extrabold text-emerald-400 outline-none w-20 uppercase border-b border-transparent focus:border-emerald-500/50 transition-colors">
+                            <button onclick="joinRoom(document.getElementById('banner-room-input').value)" class="bg-emerald-600 hover:bg-emerald-500 text-white p-1 rounded-md text-[10px] font-bold transition-colors flex items-center justify-center flex-none" title="Set Room Code">
+                                <i data-lucide="check" class="w-3 h-3"></i>
+                            </button>
+                        </div>
+                        
+                        <button onclick="toggleRemoteModal(true)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-colors shadow-lg shadow-indigo-950/50">
+                            <i data-lucide="qr-code" class="w-4 h-4"></i> Pair QR / Remote
+                        </button>
+                        
+                        ${actionButton}
+                    </div>
+                </div>
+            `;
+            mainContent.innerHTML += html;
+        }
+
+        function renderRemotePadView() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) return;
+
+            const activePlayerName = gameState.currentPlayer === 1 ? gameState.p1Name : gameState.p2Name;
+            const activeScore = gameState.currentPlayer === 1 ? gameState.p1Score : gameState.p2Score;
+            
+            const activeCheck = config.showRemoteCheckouts ? getCheckout(activeScore) : null;
+            
+            const isFitMode = remoteScale === 'fit';
+            const scaleFactor = isFitMode ? 1 : parseFloat(remoteScale) / 100;
+
+            const padPadding = isFitMode ? 'p-2 sm:p-4' : 'p-4';
+            const gapSize = isFitMode ? 'gap-2 sm:gap-3' : 'gap-3.5';
+            const turnPy = isFitMode ? 'py-2 sm:py-3' : 'py-3.5';
+            const scoreTextSize = isFitMode ? 'text-4xl sm:text-5xl' : 'text-5xl';
+            const numPy = isFitMode ? 'py-2 sm:py-3' : 'py-3';
+            const numTextSize = isFitMode ? 'text-xl sm:text-2xl' : 'text-2xl';
+
+            const quickButtons = [26, 41, 45, 60, 85, 100, 140, 180].map(val => `
+                <button onclick="inputBuffer='${val}'; handleEnter();" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-mono font-bold text-xs sm:text-sm py-1.5 sm:py-2 rounded-lg border border-slate-700/80 shadow-md transition-all active:scale-95">${val}</button>
+            `).join('');
+
+            const numButtons = [1,2,3,4,5,6,7,8,9].map(n => 
+                `<button onclick="handleNumClick('${n}')" class="bg-slate-800 hover:bg-slate-700 text-white ${numTextSize} font-black ${numPy} rounded-xl border border-slate-700 shadow-md active:scale-95">${n}</button>`
+            ).join('');
+
+            const bufferDisplayClass = inputBuffer ? 'text-white' : 'text-slate-500';
+
+            let remoteModalHtml = '';
+            if (remoteLoadModalOpen) {
+                const queueTabActive = remoteLoadTab === 'queue';
+                const groupTabActive = remoteLoadTab === 'groups';
+                const bracketTabActive = remoteLoadTab === 'bracket';
+
+                const queueBtnClass = queueTabActive ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300';
+                const groupBtnClass = groupTabActive ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300';
+                const bracketBtnClass = bracketTabActive ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300';
+
+                let listContent = '';
+
+                if (queueTabActive) {
+                    const queueItems = matchQueue.map((m, idx) => `
+                        <div class="bg-slate-950 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
+                            <div class="text-xs text-white font-bold">
+                                <div class="text-emerald-400 font-mono text-[10px] uppercase">Match #${idx + 1}</div>
+                                <span class="text-slate-300">${m.p1}</span> <span class="text-slate-500">vs</span> <span class="text-slate-300">${m.p2}</span>
+                            </div>
+                            <button onclick="loadFromQueue(${idx})" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1 shadow-md">
+                                <i data-lucide="play" class="w-3.5 h-3.5"></i> Load
+                            </button>
+                        </div>
+                    `).join('');
+
+                    listContent = `
+                        <div class="flex gap-1 mb-2">
+                            <input type="text" id="remote-queue-p1" placeholder="P1 Name" value="${queueInputs.remoteP1}" oninput="queueInputs.remoteP1 = this.value" onkeydown="if(event.key==='Enter') addRemoteMatchToQueue()" class="w-1/2 bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs outline-none focus:border-emerald-500">
+                            <input type="text" id="remote-queue-p2" placeholder="P2 Name" value="${queueInputs.remoteP2}" oninput="queueInputs.remoteP2 = this.value" onkeydown="if(event.key==='Enter') addRemoteMatchToQueue()" class="w-1/2 bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs outline-none focus:border-emerald-500">
+                            <button onclick="addRemoteMatchToQueue()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 rounded-lg font-bold transition-colors flex items-center justify-center">
+                                <i data-lucide="plus" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                        ${matchQueue.length === 0 ? `<div class="text-slate-500 text-xs text-center py-6 font-bold uppercase tracking-wider">No matches in queue</div>` : queueItems}
+                    `;
+                } else if (groupTabActive) {
+                    if (groups.length === 0) {
+                        listContent = `<div class="text-slate-500 text-xs text-center py-8 font-bold uppercase tracking-wider">No group stage matches</div>`;
+                    } else {
+                        if (selectedRemoteGroupIdx >= groups.length) selectedRemoteGroupIdx = 0;
+                        const currentGroup = groups[selectedRemoteGroupIdx];
+
+                        const groupPills = groups.map((g, gIdx) => {
+                            const isSelected = gIdx === selectedRemoteGroupIdx;
+                            const btnClass = isSelected 
+                                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50' 
+                                : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800';
+                            return `
+                                <button onclick="selectedRemoteGroupIdx=${gIdx}; render();" class="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider flex-none transition-all ${btnClass}">
+                                    ${g.name}
+                                </button>
+                            `;
+                        }).join('');
+
+                        const groupSelectorHeader = `
+                            <div class="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-2 mb-2 border-b border-slate-800">
+                                ${groupPills}
+                            </div>
+                        `;
+
+                        const groupMatchesList = currentGroup.matches.map((m, mIdx) => {
+                            const isLive = activeGroupMatchRef && activeGroupMatchRef.groupIndex === selectedRemoteGroupIdx && activeGroupMatchRef.matchIndex === mIdx;
+                            return `
+                                <div class="bg-slate-950 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
+                                    <div class="text-xs text-white font-bold">
+                                        <div class="text-emerald-400 font-mono text-[10px] uppercase flex items-center gap-1">
+                                            <span>${currentGroup.name} • Match #${mIdx + 1}</span>
+                                            ${isLive ? '<span class="bg-emerald-500 text-black px-1 rounded text-[8px] font-black">Live</span>' : ''}
+                                        </div>
+                                        <span class="text-slate-200">${m.p1Name}</span> <span class="text-slate-500">vs</span> <span class="text-slate-200">${m.p2Name}</span>
+                                    </div>
+                                    <button onclick="loadGroupMatch(${selectedRemoteGroupIdx}, ${mIdx})" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1 shadow-md">
+                                        <i data-lucide="play" class="w-3.5 h-3.5"></i> ${isLive ? 'Reload' : 'Load'}
+                                    </button>
+                                </div>
+                            `;
+                        }).join('');
+
+                        listContent = groupSelectorHeader + (currentGroup.matches.length === 0 
+                            ? `<div class="text-slate-500 text-xs text-center py-8 font-bold uppercase tracking-wider">No matches in this group</div>`
+                            : `<div class="flex flex-col gap-2">${groupMatchesList}</div>`);
+                    }
+                } else {
+                    if (tournament.length === 0) {
+                        listContent = `<div class="text-slate-500 text-xs text-center py-8 font-bold uppercase tracking-wider">No tournament matches created yet</div>`;
+                    } else {
+                        listContent = tournament.map(m => {
+                            const isLive = activeBracketMatchId === m.id;
+                            const isDone = m.winner !== null;
+                            let statusBadge = '';
+                            if (isLive) statusBadge = `<span class="bg-emerald-500 text-black text-[9px] font-black px-1.5 py-0.5 rounded uppercase">Live</span>`;
+                            else if (isDone) statusBadge = `<span class="bg-slate-700 text-slate-300 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase">Finished</span>`;
+
+                            const p1Label = m.p1.trim() || 'TBD';
+                            const p2Label = m.p2.trim() || 'TBD';
+
+                            return `
+                                <div class="bg-slate-950 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
+                                    <div class="text-xs text-white font-bold">
+                                        <div class="flex items-center gap-1.5 mb-1">
+                                            <span class="text-emerald-400 font-mono text-[10px] uppercase">${m.round}</span>
+                                            ${statusBadge}
+                                        </div>
+                                        <span class="${m.winner === 1 ? 'text-yellow-400' : 'text-slate-300'}">${p1Label}</span>
+                                        <span class="text-slate-500"> vs </span>
+                                        <span class="${m.winner === 2 ? 'text-yellow-400' : 'text-slate-300'}">${p2Label}</span>
+                                    </div>
+                                    <button onclick="loadTournamentMatch(${m.id})" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1 shadow-md">
+                                        <i data-lucide="play" class="w-3.5 h-3.5"></i> ${isLive ? 'Reload' : 'Load'}
+                                    </button>
+                                </div>
+                            `;
+                        }).join('');
+                    }
+                }
+
+                remoteModalHtml = `
+                    <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-4 flex flex-col max-h-[85vh] shadow-2xl">
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+                                <h3 class="text-base font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                                    <i data-lucide="list-video" class="w-5 h-5 text-emerald-400"></i> Load Next Match
+                                </h3>
+                                <button onclick="remoteLoadModalOpen = false; render();" class="text-slate-400 hover:text-white p-1">
+                                    <i data-lucide="x" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+
+                            <div class="grid grid-cols-3 gap-1.5 mb-3">
+                                <button onclick="remoteLoadTab='queue'; render();" class="py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${queueBtnClass}">
+                                    Queue (${matchQueue.length})
+                                </button>
+                                <button onclick="remoteLoadTab='groups'; render();" class="py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${groupBtnClass}">
+                                    Groups
+                                </button>
+                                <button onclick="remoteLoadTab='bracket'; render();" class="py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${bracketBtnClass}">
+                                    Bracket
+                                </button>
+                            </div>
+
+                            <div class="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 my-1 pr-1">
+                                ${listContent}
+                            </div>
+
+                            <button onclick="remoteLoadModalOpen = false; render();" class="mt-3 w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase tracking-wider rounded-xl">
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const scaleOptions = [
+                { val: 'fit', label: 'Fit Screen (Auto)' },
+                { val: '80', label: '80%' },
+                { val: '90', label: '90%' },
+                { val: '100', label: '100% (Default)' },
+                { val: '125', label: '125%' },
+                { val: '150', label: '150%' },
+                { val: '175', label: '175%' },
+                { val: '200', label: '200%' }
+            ];
+
+            const scaleSelectOptions = scaleOptions.map(opt => 
+                `<option value="${opt.val}" class="bg-slate-900 text-white" ${remoteScale === opt.val ? 'selected' : ''}>${opt.label}</option>`
+            ).join('');
+
+            const html = `
+                <div class="w-full flex flex-col items-center justify-center ${isFitMode ? 'max-h-[100dvh] overflow-hidden' : 'pb-12'}">
+                    
+                    <div class="w-full max-w-md mb-2 flex items-center justify-between bg-slate-950/80 border border-slate-800/80 rounded-xl px-3 py-1.5 shadow-md gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 flex-none">
+                                <i data-lucide="scaling" class="w-3.5 h-3.5 text-emerald-400"></i> Fit:
+                            </span>
+                            <select onchange="setRemoteScale(this.value)" class="bg-slate-900 text-emerald-400 border border-slate-700/80 rounded-lg px-2 py-0.5 text-xs font-bold outline-none cursor-pointer focus:border-emerald-500 transition-colors shadow-sm">
+                                ${scaleSelectOptions}
+                            </select>
+                        </div>
+
+                        <label class="flex items-center gap-1.5 text-[10px] font-bold text-slate-300 uppercase tracking-wider bg-slate-900 border border-slate-700/80 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-slate-800 transition-colors shadow-sm" title="Enable/Disable checkout hints on this remote">
+                            <input type="checkbox" onchange="updateConfig('showRemoteCheckouts', this.checked)" ${config.showRemoteCheckouts ? 'checked' : ''} class="w-3 h-3 accent-emerald-500 cursor-pointer">
+                            <span>Checkouts</span>
+                        </label>
+                    </div>
+
+                    <div class="max-w-md mx-auto w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col ${padPadding} ${gapSize} transition-all duration-300" style="${!isFitMode ? `transform: scale(${scaleFactor}); transform-origin: top center;` : ''}">
+                        <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-b border-slate-800 pb-2.5 gap-2">
+                            <div class="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 shadow-inner flex-1">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse flex-none"></span>
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-none">ROOM:</span>
+                                <input type="text" id="remote-pad-room-input" value="${roomCode}" onkeyup="if(event.key==='Enter') joinRoom(this.value)" onfocus="this.select()" class="bg-transparent text-sm font-mono font-black text-emerald-400 outline-none w-full uppercase border-b border-transparent focus:border-emerald-500 transition-colors">
+                                <button onclick="joinRoom(document.getElementById('remote-pad-room-input').value)" class="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1 transition-colors flex-none shadow-md shadow-emerald-950/50" title="Confirm Room Code">
+                                    <i data-lucide="check" class="w-3.5 h-3.5"></i> <span class="text-[10px]">Set</span>
+                                </button>
+                            </div>
+                            <div class="flex gap-1">
+                                <button onclick="toggleRemoteModal(true)" class="text-[10px] uppercase font-bold text-indigo-300 hover:text-white bg-indigo-950/70 hover:bg-indigo-900 px-3 py-2 rounded-xl border border-indigo-700/50 transition-colors flex items-center justify-center gap-1 flex-none" title="Show QR Code for Pairing">
+                                    <i data-lucide="qr-code" class="w-3.5 h-3.5"></i> Pair QR
+                                </button>
+                                <button onclick="toggleRemoteMode(false)" class="text-[10px] uppercase font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-2 rounded-xl border border-slate-700 transition-colors flex items-center justify-center gap-1 flex-none">
+                                    <i data-lucide="layout-dashboard" class="w-3.5 h-3.5"></i> Exit Remote
+                                </button>
+                            </div>
+                        </div>
+
+                        <button onclick="remoteLoadModalOpen = true; render();" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 sm:py-2.5 rounded-xl border border-indigo-500/50 shadow-lg flex items-center justify-center gap-2 text-xs uppercase tracking-wider transition-colors active:scale-95">
+                            <i data-lucide="list-video" class="w-4 h-4"></i> Load Match (Queue / Groups / Tree)
+                        </button>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="setPlayer(1)" class="py-1.5 sm:py-2 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${gameState.currentPlayer === 1 ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-950/50' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}">
+                                <span class="w-2 h-2 rounded-full ${gameState.currentPlayer === 1 ? 'bg-white animate-pulse' : 'bg-slate-600'}"></span>
+                                <span class="truncate">P1: ${gameState.p1Name}</span>
+                            </button>
+                            <button onclick="setPlayer(2)" class="py-1.5 sm:py-2 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${gameState.currentPlayer === 2 ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-950/50' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}">
+                                <span class="w-2 h-2 rounded-full ${gameState.currentPlayer === 2 ? 'bg-white animate-pulse' : 'bg-slate-600'}"></span>
+                                <span class="truncate">P2: ${gameState.p2Name}</span>
+                            </button>
+                        </div>
+
+                        <div class="bg-slate-950 border border-slate-800 rounded-xl ${turnPy} px-4 text-center relative overflow-hidden shadow-inner">
+                            <div class="text-[10px] sm:text-xs text-slate-400 uppercase font-bold tracking-widest mb-0.5">Current Turn</div>
+                            <div class="text-xl sm:text-2xl font-black text-white truncate px-2 mb-0.5">${activePlayerName}</div>
+                            <div class="${scoreTextSize} font-extrabold text-emerald-400 font-mono tracking-tight">${activeScore}</div>
+                            ${activeCheck ? `<div class="mt-1 text-xs font-mono font-bold text-yellow-400 bg-yellow-950/40 border border-yellow-500/30 rounded-lg py-0.5 px-2">Checkout: ${activeCheck}</div>` : ''}
+                        </div>
+
+                        <div class="bg-slate-950 border border-slate-800 rounded-xl p-2.5 sm:p-3 flex items-center justify-between">
+                            <span class="text-xs text-slate-400 uppercase font-bold">Entered:</span>
+                            <div class="text-2xl sm:text-3xl font-mono font-bold tracking-widest ${bufferDisplayClass}">${inputBuffer || '0'}</div>
+                        </div>
+
+                        <div class="grid grid-cols-4 gap-1.5">
+                            ${quickButtons}
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-1.5 sm:gap-2">
+                            ${numButtons}
+                            <button onclick="clearInput()" class="bg-slate-800 text-red-400 font-bold text-sm ${numPy} rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="eraser" class="w-5 h-5"></i></button>
+                            <button onclick="handleNumClick('0')" class="bg-slate-800 text-white ${numTextSize} font-black ${numPy} rounded-xl border border-slate-700 shadow-md">0</button>
+                            <button onclick="handleBackspace()" class="bg-slate-800 text-amber-400 font-bold text-sm ${numPy} rounded-xl border border-slate-700 flex items-center justify-center"><i data-lucide="chevron-left" class="w-6 h-6"></i></button>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2 mt-0.5">
+                            <button onclick="handleUndo()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 py-2.5 sm:py-3 rounded-xl font-bold uppercase text-xs flex items-center justify-center gap-2 border border-slate-700">
+                                <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Undo
+                            </button>
+                            <button onclick="handleEnter()" class="bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 sm:py-3 rounded-xl font-black uppercase text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50">
+                                Submit <i data-lucide="corner-down-left" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                ${remoteModalHtml}
+            `;
+            mainContent.innerHTML = html;
+        }
+
+        function renderOperatorConsole() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) return;
+
+            const html = `
+                <div class="max-w-6xl mx-auto w-full flex-grow flex flex-col justify-center">
+                    ${getKeypadHTML()}
+                </div>
+            `;
+            mainContent.innerHTML += html;
+        }
+
+        function renderBracketSection() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) return;
+
+            const activeTab = config.bracketActiveTab;
+            const groupTabClass = activeTab === 'groups' ? "text-emerald-400 border-b-2 border-emerald-500 bg-slate-800/50" : "text-slate-400 hover:text-white hover:bg-slate-800/30";
+            const bracketTabClass = activeTab === 'bracket' ? "text-emerald-400 border-b-2 border-emerald-500 bg-slate-800/50" : "text-slate-400 hover:text-white hover:bg-slate-800/30";
+            const settingsTabClass = activeTab === 'settings' ? "text-emerald-400 border-b-2 border-emerald-500 bg-slate-800/50" : "text-slate-400 hover:text-white hover:bg-slate-800/30";
+
+            let tabBody = '';
+            if (activeTab === 'groups') {
+                tabBody = getGroupStageHTML(false);
+            } else if (activeTab === 'bracket') {
+                tabBody = getVisualBracketHTML(false);
+            } else {
+                tabBody = getBracketSettingsHTML();
+            }
+
+            const isBracketPoppedOut = bracketPopupWindow && !bracketPopupWindow.closed;
+            const popoutBracketBtn = isBracketPoppedOut 
+                ? `<button onclick="focusBracketPopout()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs uppercase font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-emerald-900/30" title="Focus Popped Out Bracket">
+                    <i data-lucide="maximize-2" class="w-3.5 h-3.5"></i> Focus Window
+                   </button>`
+                : `<button onclick="openBracketPopout()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs uppercase font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-indigo-900/30" title="Pop Out Stage into Standalone Window">
+                    <i data-lucide="external-link" class="w-3.5 h-3.5"></i> Popout Window
+                   </button>`;
+
+            const advanceGroupBtn = activeTab === 'groups' ? `
+                <button onclick="advanceGroupsToKnockout()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs uppercase font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-emerald-900/30" title="Seed Group Winners into Knockout Tree">
+                    <i data-lucide="arrow-right-circle" class="w-3.5 h-3.5"></i> Advance Top 2 To Tree
+                </button>
+            ` : '';
+
+            const html = `
+                <div class="max-w-6xl mx-auto w-full bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden mt-2">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-950 border-b border-slate-800 px-6 py-4 gap-4">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2 bg-emerald-900/40 text-emerald-400 rounded-xl border border-emerald-500/20">
+                                <i data-lucide="git-merge" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-base font-bold text-white uppercase tracking-wider">Tournament Stage Manager</h2>
+                                <p class="text-[11px] text-slate-400">${tournamentSize}-Player Tournament Framework</p>
+                            </div>
+                        </div>
+                        
+                        <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                            <div class="flex items-center bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs">
+                                <label class="text-slate-400 font-bold uppercase text-[10px] mr-2">Players:</label>
+                                <select onchange="changeTournamentSize(this.value)" class="bg-transparent text-white font-bold outline-none cursor-pointer">
+                                    <option value="4" class="bg-slate-900" ${tournamentSize === 4 ? 'selected' : ''}>4 Players</option>
+                                    <option value="8" class="bg-slate-900" ${tournamentSize === 8 ? 'selected' : ''}>8 Players</option>
+                                    <option value="16" class="bg-slate-900" ${tournamentSize === 16 ? 'selected' : ''}>16 Players</option>
+                                    <option value="32" class="bg-slate-900" ${tournamentSize === 32 ? 'selected' : ''}>32 Players</option>
+                                    <option value="64" class="bg-slate-900" ${tournamentSize === 64 ? 'selected' : ''}>64 Players</option>
+                                </select>
+                            </div>
+
+                            <div class="flex bg-slate-900 rounded-lg border border-slate-800 overflow-hidden text-xs font-bold uppercase">
+                                <button onclick="setBracketTab('groups')" class="px-3 py-1.5 transition-colors ${groupTabClass}">Group Stage</button>
+                                <button onclick="setBracketTab('bracket')" class="px-3 py-1.5 transition-colors ${bracketTabClass}">Knockout Tree</button>
+                                <button onclick="setBracketTab('settings')" class="px-3 py-1.5 transition-colors ${settingsTabClass}">Rules</button>
+                            </div>
+
+                            ${advanceGroupBtn}
+
+                            ${popoutBracketBtn}
+
+                            <button onclick="exportBracketJson()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs uppercase font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-indigo-900/30" title="Save Tournament File (.json)">
+                                <i data-lucide="download" class="w-3.5 h-3.5"></i> Save JSON
+                            </button>
+
+                            <button onclick="triggerBracketImport()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs uppercase font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-indigo-900/30" title="Load Saved Tournament (.json)">
+                                <i data-lucide="upload" class="w-3.5 h-3.5"></i> Load JSON
+                            </button>
+
+                            <button onclick="exportBracketToExcel()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs uppercase font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-emerald-900/30" title="Export Tournament Data to Excel">
+                                <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i> Excel
+                            </button>
+
+                            <button onclick="clearBracket()" class="bg-red-900/40 hover:bg-red-900/60 text-red-300 border border-red-900/50 px-3 py-1.5 rounded-lg text-xs uppercase font-bold transition-colors flex items-center gap-1.5 shadow-md" title="Clear Tournament Names">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Clear
+                            </button>
+
+                            <input type="file" id="bracket-import-file" accept=".json" class="hidden" onchange="importBracketJson(this)">
+                        </div>
+                    </div>
+                    
+                    <div class="p-6">
+                        ${tabBody}
+                    </div>
+                </div>
+            `;
+            mainContent.innerHTML += html;
+        }
+
+        function getKeypadHTML() {
+            const bgClass = 'bg-slate-800 border-slate-600';
+            const btnBg = 'bg-slate-700 hover:bg-slate-600';
+            const inputBg = 'bg-slate-950 border-slate-700';
+            
+            const activeTabClass = "text-emerald-400 border-b-2 border-emerald-500 bg-slate-800/50";
+            const inactiveTabClass = "text-slate-400 hover:text-white hover:bg-slate-800/30";
+
+            const chromaColors = ['#00b140', '#0047bb', '#ff00ff'];
+
+            const numButtons = [1,2,3,4,5,6,7,8,9].map(n => 
+                `<button onclick="handleNumClick('${n}')" class="${btnBg} text-white text-2xl md:text-3xl font-bold rounded-lg shadow-lg shadow-black/20">${n}</button>`
+            ).join('');
+
+            const undoDisabled = undoStack.length === 0 ? 'disabled' : '';
+            const clearDisabled = !inputBuffer ? 'disabled' : '';
+            const bufferDisplayClass = inputBuffer ? 'text-white' : 'text-slate-500';
+            const bufferText = inputBuffer || "0";
+
+            const matchTabClass = config.activeQuickTab === 'match' ? activeTabClass : inactiveTabClass;
+            const infoTabClass = config.activeQuickTab === 'info' ? activeTabClass : inactiveTabClass;
+            const styleTabClass = config.activeQuickTab === 'style' ? activeTabClass : inactiveTabClass;
+            const queueTabClass = config.activeQuickTab === 'queue' ? activeTabClass : inactiveTabClass;
+            
+            let tabContent = '';
+
+            const p1Avg = calculateAverage(1);
+            const p2Avg = calculateAverage(2);
+            
+            if (config.activeQuickTab === 'match') {
+                const s301 = config.startingScore === 301 ? 'selected' : '';
+                const s501 = config.startingScore === 501 ? 'selected' : '';
+                const s701 = config.startingScore === 701 ? 'selected' : '';
+                const p1Checked = gameState.currentPlayer === 1 ? 'checked' : '';
+                const p2Checked = gameState.currentPlayer === 2 ? 'checked' : '';
+                const checkoutsChecked = config.showCheckouts ? 'checked' : '';
+                const remoteCheckoutsChecked = config.showRemoteCheckouts ? 'checked' : '';
+                const averagesChecked = config.showAverage ? 'checked' : '';
+
+                tabContent = `
+                    <div class="flex flex-col gap-2 py-0.5">
+                        <div class="grid grid-cols-3 gap-2">
+                            <div>
+                                <label class="block text-slate-300 font-bold uppercase text-xs mb-1">Score</label>
+                                <select onchange="updateConfig('startingScore', this.value)" class="w-full ${inputBg} rounded px-2 py-1 text-white text-sm font-bold outline-none focus:border-emerald-500 border cursor-pointer">
+                                    <option value="301" ${s301}>301</option>
+                                    <option value="501" ${s501}>501</option>
+                                    <option value="701" ${s701}>701</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-slate-300 font-bold uppercase text-xs mb-1">Legs</label>
+                                <input type="number" min="0" value="${config.legsPerSet}" onchange="updateConfig('legsPerSet', this.value)" onkeydown="return false" class="w-full ${inputBg} rounded px-2 py-1 text-white text-sm font-bold outline-none focus:border-emerald-500 border">
+                            </div>
+                            <div>
+                                <label class="block text-slate-300 font-bold uppercase text-xs mb-1">Sets</label>
+                                <input type="number" min="1" value="${config.setsToWin}" onchange="updateConfig('setsToWin', this.value)" onkeydown="return false" class="w-full ${inputBg} rounded px-2 py-1 text-white text-sm font-bold outline-none focus:border-emerald-500 border">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-slate-300 font-bold uppercase text-xs mb-1">Starting Player</label>
+                            <div class="grid grid-cols-2 gap-2">
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="startPlayer" class="peer sr-only" onchange="setPlayer(1)" ${p1Checked}>
+                                    <div class="w-full text-center py-1 rounded bg-slate-950 border border-slate-700 peer-checked:bg-emerald-600 peer-checked:border-emerald-500 peer-checked:text-white text-slate-300 text-xs sm:text-sm font-bold transition-all hover:bg-slate-900 truncate px-1">P1 (${gameState.p1Name.split(' ')[0]})</div>
+                                </label>
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="startPlayer" class="peer sr-only" onchange="setPlayer(2)" ${p2Checked}>
+                                    <div class="w-full text-center py-1 rounded bg-slate-950 border border-slate-700 peer-checked:bg-emerald-600 peer-checked:border-emerald-500 peer-checked:text-white text-slate-300 text-xs sm:text-sm font-bold transition-all hover:bg-slate-900 truncate px-1">P2 (${gameState.p2Name.split(' ')[0]})</div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-1.5">
+                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2 py-1.5 rounded cursor-pointer hover:bg-slate-900" title="Show checkouts on popout/TV overlay">
+                                <span class="text-slate-200 font-bold uppercase text-[10px] sm:text-xs">TV Check</span>
+                                <input type="checkbox" id="toggle-checkouts" onchange="updateConfig('showCheckouts', this.checked)" ${checkoutsChecked} class="w-3.5 h-3.5 accent-emerald-500 cursor-pointer">
+                            </label>
+                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2 py-1.5 rounded cursor-pointer hover:bg-slate-900" title="Show checkouts on mobile remote">
+                                <span class="text-slate-200 font-bold uppercase text-[10px] sm:text-xs">Remote Check</span>
+                                <input type="checkbox" id="toggle-remote-checkouts" onchange="updateConfig('showRemoteCheckouts', this.checked)" ${remoteCheckoutsChecked} class="w-3.5 h-3.5 accent-emerald-500 cursor-pointer">
+                            </label>
+                            <label class="flex items-center justify-between bg-slate-950 border border-slate-700 px-2 py-1.5 rounded cursor-pointer hover:bg-slate-900">
+                                <span class="text-slate-200 font-bold uppercase text-[10px] sm:text-xs">Averages</span>
+                                <input type="checkbox" id="toggle-averages" onchange="updateConfig('showAverage', this.checked)" ${averagesChecked} class="w-3.5 h-3.5 accent-emerald-500 cursor-pointer">
+                            </label>
+                        </div>
+
+                        <div class="bg-slate-950 border border-slate-700 px-3 py-1.5 rounded flex justify-between items-center text-xs font-mono">
+                            <div class="text-slate-300 font-bold text-xs">P1 AVG: <span class="text-emerald-400 font-extrabold text-sm">${p1Avg}</span></div>
+                            <div class="text-slate-300 font-bold text-xs">P2 AVG: <span class="text-emerald-400 font-extrabold text-xs sm:text-sm">${p2Avg}</span></div>
+                        </div>
+                    </div>
+                `;
+            } else if (config.activeQuickTab === 'info') {
+                tabContent = `
+                    <div class="flex flex-col gap-2.5 py-1">
+                        <div>
+                            <label class="block text-slate-300 font-bold uppercase text-xs mb-1 flex items-center justify-between">
+                                <span>Tournament Name</span>
+                                <span class="text-[10px] text-slate-400 font-normal">Scoreboard Footer</span>
+                            </label>
+                            <input type="text" id="info-tournament-name" value="${config.footerText}" oninput="updateConfig('footerText', this.value)" placeholder="e.g. World Darts Championship" class="w-full ${inputBg} rounded p-2 text-white text-xs sm:text-sm font-semibold outline-none focus:border-emerald-500 border shadow-inner">
+                        </div>
+
+                        <div>
+                            <label class="block text-slate-300 font-bold uppercase text-xs mb-1 flex items-center justify-between">
+                                <span>Win Condition / Match Title</span>
+                                <span class="text-[10px] text-slate-400 font-normal">Scoreboard Header</span>
+                            </label>
+                            <input type="text" id="info-match-title" value="${config.matchTitle}" oninput="updateConfig('matchTitle', this.value)" placeholder="e.g. First to 3 Sets" class="w-full ${inputBg} rounded p-2 text-white text-xs sm:text-sm font-semibold outline-none focus:border-emerald-500 border shadow-inner">
+                        </div>
+
+                        <div class="bg-slate-950/60 border border-slate-800 p-2 rounded-lg text-[11px] text-slate-400 leading-tight flex items-start gap-2 mt-0.5">
+                            <i data-lucide="info" class="w-4 h-4 text-emerald-400 flex-none mt-0.5"></i>
+                            <span>Updates live across the TV overlay, popout window, and mobile remotes.</span>
+                        </div>
+                    </div>
+                `;
+            } else if (config.activeQuickTab === 'style') {
+                const chromaButtons = chromaColors.map(c => 
+                    `<button onclick="setChroma('${c}')" class="w-8 h-8 rounded border border-white/20 shadow-sm hover:scale-110 transition-transform flex-none" style="background-color: ${c}"></button>`
+                ).join('');
+
+                tabContent = `
+                    <div class="flex flex-col justify-between h-full py-1">
+                        <div class="flex gap-1">
+                            <div class="flex-[2] bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col justify-between">
+                                <label class="text-xs font-bold text-slate-300 uppercase mb-0.5 text-center w-full block">Chroma Key</label>
+                                <div class="flex gap-1 justify-center items-center">
+                                    ${chromaButtons}
+                                    <div class="relative w-8 h-8 rounded border border-white/20 bg-slate-800 flex items-center justify-center text-slate-400 hover:text-white overflow-hidden shadow-sm hover:scale-110 transition-transform flex-none ml-2">
+                                        <i data-lucide="palette" class="w-4 h-4"></i>
+                                        <input id="chroma-picker-input" type="color" oninput="setChroma(this.value)" value="${config.chromaColor}" class="absolute inset-0 opacity-0 w-full h-full cursor-pointer">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex-1 bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col items-center justify-between">
+                                <span class="text-xs font-bold text-slate-300 uppercase mb-1 text-center leading-tight">Active</span>
+                                <input type="color" oninput="updateConfig('color-indicator', this.value)" value="${config.colors.indicator}" class="w-full h-8 rounded cursor-pointer border border-white/10">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-1 my-1">
+                            <div class="bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col items-center">
+                                <span class="text-xs font-bold text-slate-300 uppercase mb-1">Header</span>
+                                <div class="flex gap-1">
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">BG</span>
+                                        <input type="color" oninput="updateConfig('color-headerBg', this.value)" value="${config.colors.headerBg}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">TXT</span>
+                                        <input type="color" oninput="updateConfig('color-headerText', this.value)" value="${config.colors.headerText}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col items-center">
+                                <span class="text-xs font-bold text-slate-300 uppercase mb-1">Player</span>
+                                <div class="flex gap-1">
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">BG</span>
+                                        <input type="color" oninput="updateConfig('color-playerBg', this.value)" value="${config.colors.playerBg}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">TXT</span>
+                                        <input type="color" oninput="updateConfig('color-playerText', this.value)" value="${config.colors.playerText}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-slate-900/40 p-1.5 rounded border border-white/5 flex flex-col items-center">
+                                <span class="text-xs font-bold text-slate-300 uppercase mb-1">Score</span>
+                                <div class="flex gap-1">
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">BG</span>
+                                        <input type="color" oninput="updateConfig('color-scoreBg', this.value)" value="${config.colors.scoreBg}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                    <div class="flex flex-col items-center gap-0">
+                                        <span class="text-[9px] text-slate-400 uppercase font-bold">TXT</span>
+                                        <input type="color" oninput="updateConfig('color-scoreText', this.value)" value="${config.colors.scoreText}" class="w-7 h-7 rounded cursor-pointer">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-1 mt-auto">
+                            <button onclick="triggerImport()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] uppercase font-bold py-2 rounded border border-slate-600 flex items-center justify-center gap-1 transition-colors h-9">
+                                <i data-lucide="upload" class="w-4 h-4"></i> Import
+                            </button>
+                            <button onclick="exportColors()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] uppercase font-bold py-2 rounded border border-slate-600 flex items-center justify-center gap-1 transition-colors h-9">
+                                <i data-lucide="download" class="w-4 h-4"></i> Export
+                            </button>
+                            <input type="file" id="import-file" accept=".json" class="hidden" onchange="importColors(this)">
+                        </div>
+                    </div>
+                `;
+            } else {
+                const queueList = matchQueue.length === 0 
+                    ? '<div class="text-slate-500 text-[10px] text-center py-6 font-bold uppercase tracking-widest">Queue Empty</div>' 
+                    : matchQueue.map((m, i) => `
+                        <div class="bg-slate-800/80 p-2 rounded flex justify-between items-center border border-slate-700/50 shadow-sm">
+                            <div class="text-xs text-slate-200 truncate max-w-[140px] leading-tight font-bold">
+                                <span class="text-slate-400 font-normal text-[10px] uppercase">P1:</span> ${m.p1}<br>
+                                <span class="text-slate-400 font-normal text-[10px] uppercase">P2:</span> ${m.p2}
+                            </div>
+                            <div class="flex gap-1">
+                                <button onclick="loadFromQueue(${i})" class="bg-emerald-600/80 hover:bg-emerald-500 text-white px-2 py-1.5 rounded transition-colors text-[10px] font-bold uppercase flex items-center gap-1 shadow-md shadow-black/20" title="Load Match">
+                                    <i data-lucide="play" class="w-3 h-3"></i> Load
+                                </button>
+                                <button onclick="removeFromQueue(${i})" class="bg-red-900/60 hover:bg-red-700 text-white p-1.5 rounded transition-colors flex items-center justify-center shadow-md shadow-black/20" title="Remove">
+                                    <i data-lucide="trash-2" class="w-3 h-3"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+
+                tabContent = `
+                    <div class="flex flex-col h-full py-1">
+                        <div class="flex gap-1 mb-2">
+                            <input type="text" id="queue-p1" placeholder="P1 Name" value="${queueInputs.p1}" oninput="queueInputs.p1 = this.value" onkeydown="if(event.key==='Enter') addMatchToQueue()" class="w-1/2 ${inputBg} rounded p-1.5 text-white text-xs outline-none focus:border-emerald-500 border shadow-inner">
+                            <input type="text" id="queue-p2" placeholder="P2 Name" value="${queueInputs.p2}" oninput="queueInputs.p2 = this.value" onkeydown="if(event.key==='Enter') addMatchToQueue()" class="w-1/2 ${inputBg} rounded p-1.5 text-white text-xs outline-none focus:border-emerald-500 border shadow-inner">
+                            <button onclick="addMatchToQueue()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded px-3 font-bold transition-colors flex items-center justify-center shadow-lg shadow-emerald-900/20">
+                                <i data-lucide="plus" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                        <div class="flex-1 overflow-y-auto no-scrollbar bg-slate-900/40 rounded border border-white/5 p-1 flex flex-col gap-1 min-h-[120px]">
+                            ${queueList}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            return `
+                <div class="flex flex-col md:flex-row gap-4 items-end md:items-stretch h-auto md:h-80">
+                    <div class="w-full md:w-1/4 rounded-xl p-4 flex flex-col justify-between border ${bgClass}">
+                        <div class="text-slate-300 text-sm md:text-base uppercase tracking-widest font-bold mb-2">Throw</div>
+                        <div class="text-5xl md:text-6xl font-mono font-bold text-right tracking-widest border-b-2 border-slate-700 pb-2 ${bufferDisplayClass}">
+                            ${bufferText}
+                        </div>
+                        <div class="flex gap-2 mt-4">
+                            <button onclick="handleUndo()" ${undoDisabled} class="flex-1 flex items-center justify-center gap-2 ${btnBg} disabled:opacity-50 rounded-lg py-3 transition-colors text-slate-200 font-bold">
+                                <i data-lucide="rotate-ccw" class="w-5 h-5"></i>
+                            </button>
+                            <button onclick="clearInput()" ${clearDisabled} class="flex-1 flex items-center justify-center gap-2 ${btnBg} disabled:opacity-50 rounded-lg py-3 transition-colors text-red-300 font-bold">
+                                <i data-lucide="eraser" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="w-full md:w-1/3 rounded-xl p-2 md:p-3 grid grid-cols-3 gap-2 border shadow-xl ${bgClass}">
+                        ${numButtons}
+                        <button onclick="handleNumClick('0')" class="${btnBg} text-white text-2xl md:text-3xl font-bold rounded-lg shadow-lg shadow-black/20">0</button>
+                        <button onclick="handleBackspace()" class="${btnBg} text-amber-500 rounded-lg flex items-center justify-center shadow-lg shadow-black/20"><i data-lucide="chevron-left" class="w-6 h-6"></i></button>
+                        <button onclick="handleEnter()" class="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-400 text-white text-xl md:text-2xl font-bold rounded-lg flex items-center justify-center shadow-lg shadow-emerald-900/20 col-span-1">ENT</button>
+                    </div>
+
+                    <div class="w-full md:flex-1 rounded-xl flex flex-col justify-between border ${bgClass} overflow-hidden relative">
+                        <div class="flex items-center border-b border-slate-700/50 text-[10px] sm:text-[11px] md:text-xs font-bold uppercase tracking-wider bg-slate-900">
+                            <button onclick="setQuickTab('match')" class="flex-1 py-3 text-center transition-colors ${matchTabClass}">Match</button>
+                            <button onclick="setQuickTab('info')" class="flex-1 py-3 text-center transition-colors ${infoTabClass}">Info</button>
+                            <button onclick="setQuickTab('style')" class="flex-1 py-3 text-center transition-colors ${styleTabClass}">Style</button>
+                            <button onclick="setQuickTab('queue')" class="flex-1 py-3 text-center transition-colors ${queueTabClass}">Queue</button>
+                        </div>
+
+                        <div class="p-2 flex-1 flex flex-col gap-1 text-xs md:text-sm overflow-hidden">
+                            ${tabContent}
+                        </div>
+
+                        <div class="p-2 pt-0 border-t border-slate-800/50 mt-auto">
+                            <button onclick="resetMatch()" class="w-full bg-red-900/30 hover:bg-red-900/50 text-white border border-red-900/50 rounded py-2.5 font-bold transition-colors flex items-center justify-center gap-2 text-xs uppercase tracking-wider">
+                                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reset Match
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getVisualBracketHTML(isPoppedOut = false) {
+            const matches = tournament;
+            const targetWindow = isPoppedOut ? 'window.opener.' : '';
+
+            const rounds = Array.from(new Set(matches.map(m => m.roundTitle)));
+
+            const renderMatchBox = (m) => {
+                const isActive = activeBracketMatchId === m.id;
+                const activeBorder = isActive ? 'border-emerald-500 shadow-emerald-950/80 ring-2 ring-emerald-500/50' : 'border-slate-700/80';
+                const liveBadge = isActive ? `<span class="bg-emerald-500 text-black text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse">Live</span>` : '';
+
+                const advanceP1 = m.nextMatch !== null ? `<button onclick="${targetWindow}advanceTournament(${m.id}, 'p1')" title="Advance Player 1" class="bg-slate-800 hover:bg-emerald-600 px-2 text-slate-300 hover:text-white transition-colors flex items-center justify-center border-l border-slate-700 text-xs font-bold"><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></button>` : '';
+                const advanceP2 = m.nextMatch !== null ? `<button onclick="${targetWindow}advanceTournament(${m.id}, 'p2')" title="Advance Player 2" class="bg-slate-800 hover:bg-emerald-600 px-2 text-slate-300 hover:text-white transition-colors flex items-center justify-center border-l border-slate-700 text-xs font-bold"><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></button>` : '';
+
+                const p1WinnerBadge = m.winner === 1 ? `<span class="bg-yellow-400 text-black text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider mr-1 shadow-sm">Winner</span>` : '';
+                const p2WinnerBadge = m.winner === 2 ? `<span class="bg-yellow-400 text-black text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider mr-1 shadow-sm">Winner</span>` : '';
+
+                return `
+                    <div class="bg-slate-950 border ${activeBorder} rounded-xl overflow-hidden shadow-xl flex flex-col w-full my-1 transition-all">
+                        <div class="bg-slate-900 px-2.5 py-1 flex justify-between items-center border-b border-slate-800">
+                            <div class="flex items-center gap-1.5 min-w-0">
+                                <span class="text-[10px] text-emerald-400 font-black uppercase tracking-wider truncate">${m.round}</span>
+                                ${liveBadge}
+                            </div>
+                            <button onclick="${targetWindow}loadTournamentMatch(${m.id})" class="text-[10px] bg-emerald-600 hover:bg-emerald-500 px-2 py-0.5 rounded text-white font-bold transition-colors flex items-center gap-1 shadow-md shadow-emerald-900/30 flex-none">
+                                <i data-lucide="play" class="w-2.5 h-2.5"></i> Load
+                            </button>
+                        </div>
+                        <div class="flex flex-col divide-y divide-slate-800/80">
+                            <div class="flex items-center bg-slate-950/60">
+                                <input type="text" id="t-p1-${m.id}" class="w-full bg-transparent text-[11px] text-white px-2.5 py-1 outline-none placeholder:text-slate-600 font-medium" placeholder="Player 1" value="${m.p1}" oninput="${targetWindow}updateTournament(${m.id}, 'p1', this.value)">
+                                ${p1WinnerBadge}
+                                <input type="text" id="t-p1s-${m.id}" class="w-8 bg-slate-900/80 text-emerald-400 text-center font-mono font-bold text-[11px] py-1 border-l border-slate-800 outline-none" placeholder="0" value="${m.p1Score !== undefined ? m.p1Score : ''}" oninput="${targetWindow}updateTournamentScore(${m.id}, 'p1Score', this.value)">
+                                ${advanceP1}
+                            </div>
+                            <div class="flex items-center bg-slate-950/60">
+                                <input type="text" id="t-p2-${m.id}" class="w-full bg-transparent text-[11px] text-white px-2.5 py-1 outline-none placeholder:text-slate-600 font-medium" placeholder="Player 1" value="${m.p2}" oninput="${targetWindow}updateTournament(${m.id}, 'p2', this.value)">
+                                ${p2WinnerBadge}
+                                <input type="text" id="t-p2s-${m.id}" class="w-8 bg-slate-900/80 text-emerald-400 text-center font-mono font-bold text-[11px] py-1 border-l border-slate-800 outline-none" placeholder="0" value="${m.p2Score !== undefined ? m.p2Score : ''}" oninput="${targetWindow}updateTournamentScore(${m.id}, 'p2Score', this.value)">
+                                ${advanceP2}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            };
+
+            let minGridWidth = 700;
+            let colGap = "gap-4";
+            if (tournamentSize === 16) {
+                minGridWidth = 950;
+                colGap = "gap-5";
+            } else if (tournamentSize === 32) {
+                minGridWidth = 1200;
+                colGap = "gap-6";
+            } else if (tournamentSize === 64) {
+                minGridWidth = 1500;
+                colGap = "gap-6";
+            }
+
+            const columnsHtml = rounds.map(rTitle => {
+                const roundMatchList = matches.filter(m => m.roundTitle === rTitle);
+                const boxesHtml = roundMatchList.map(m => renderMatchBox(m)).join('');
+
+                return `
+                    <div class="flex flex-col justify-around h-full min-w-[170px] max-w-[220px]">
+                        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-widest text-center mb-1 flex items-center justify-center gap-1.5 bg-slate-950/80 py-1 rounded-lg border border-slate-800/80">
+                            <i data-lucide="layers" class="w-3 h-3 text-emerald-500"></i> ${rTitle}
+                        </div>
+                        <div class="flex flex-col justify-around flex-grow">
+                            ${boxesHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="overflow-x-auto custom-scrollbar pb-3 pt-1">
+                    <div class="grid grid-flow-col auto-cols-fr ${colGap} items-center" style="min-width: ${minGridWidth}px;">
+                        ${columnsHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        function getGroupStageHTML(isPoppedOut = false) {
+            const targetWindow = isPoppedOut ? 'window.opener.' : '';
+
+            let totalPlayersInGroups = 0;
+            groups.forEach(g => totalPlayersInGroups += g.players.length);
+
+            const topControls = `
+                <div class="mb-4 flex flex-wrap items-center justify-between bg-slate-950/70 border border-slate-800 p-3 rounded-xl gap-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs font-bold text-slate-300 uppercase tracking-wider">Group Stage Setup:</span>
+                        <span class="bg-emerald-950 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold px-2.5 py-0.5 rounded-full font-mono">${groups.length} Groups • ${totalPlayersInGroups} Players</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="${targetWindow}addGroup()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-emerald-950/50 transition-colors">
+                            <i data-lucide="folder-plus" class="w-3.5 h-3.5"></i> Add New Group
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            const groupCards = groups.map((g, gIdx) => {
+                const standings = calculateGroupStandings(g);
+
+                const tableRows = standings.map((s, rank) => {
+                    const rankClass = rank < 2 ? 'text-yellow-400 font-extrabold' : 'text-slate-400';
+                    return `
+                        <tr class="border-b border-slate-800/60 hover:bg-slate-900/50 text-xs">
+                            <td class="py-1.5 px-2 text-center font-bold ${rankClass}">${rank + 1}</td>
+                            <td class="py-1.5 px-2">
+                                <input type="text" id="group-player-${gIdx}-${s.playerIndex}" value="${s.name}" oninput="${targetWindow}updateGroupPlayerName(${gIdx}, ${s.playerIndex}, this.value)" class="bg-transparent text-white font-medium outline-none w-full focus:border-b focus:border-emerald-500">
+                            </td>
+                            <td class="py-1.5 px-2 text-center font-mono text-slate-300">${s.played}</td>
+                            <td class="py-1.5 px-2 text-center font-mono text-emerald-400 font-bold">${s.won}</td>
+                            <td class="py-1.5 px-2 text-center font-mono text-red-400">${s.lost}</td>
+                            <td class="py-1.5 px-2 text-center font-mono text-slate-400 text-[11px]">${s.legsFor}-${s.legsAgainst}</td>
+                            <td class="py-1.5 px-2 text-center font-mono ${s.legDiff > 0 ? 'text-emerald-400' : (s.legDiff < 0 ? 'text-red-400' : 'text-slate-400')} font-bold">${s.legDiff > 0 ? '+' : ''}${s.legDiff}</td>
+                            <td class="py-1.5 px-2 text-center font-mono font-black text-yellow-400 text-sm">${s.points}</td>
+                            <td class="py-1.5 px-1 text-center">
+                                <button onclick="${targetWindow}removePlayerFromGroup(${gIdx}, ${s.playerIndex})" class="text-slate-500 hover:text-red-400 p-1 transition-colors" title="Remove ${s.name}">
+                                    <i data-lucide="user-minus" class="w-3.5 h-3.5"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                const matchRows = g.matches.map((m, mIdx) => {
+                    const isLive = activeGroupMatchRef && activeGroupMatchRef.groupIndex === gIdx && activeGroupMatchRef.matchIndex === mIdx;
+                    const liveBorder = isLive ? 'border-emerald-500 bg-emerald-950/30 ring-1 ring-emerald-500/50' : 'border-slate-800/80 bg-slate-950/80';
+
+                    return `
+                        <div class="flex items-center justify-between border ${liveBorder} rounded-lg p-1.5 text-xs">
+                            <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                                <span class="font-medium text-slate-200 truncate w-1/2 text-right">${m.p1Name}</span>
+                                <span class="text-slate-500 text-[10px] uppercase flex-none">vs</span>
+                                <span class="font-medium text-slate-200 truncate w-1/2">${m.p2Name}</span>
+                            </div>
+
+                            <div class="flex items-center gap-1 flex-none ml-2">
+                                <input type="text" id="group-score-${gIdx}-${mIdx}-p1" placeholder="0" value="${m.p1Score}" oninput="${targetWindow}updateGroupMatchScore(${gIdx}, ${mIdx}, 'p1Score', this.value)" class="w-7 text-center bg-slate-900 border border-slate-700 rounded text-emerald-400 font-mono font-bold text-xs py-0.5 outline-none">
+                                <span class="text-slate-600 font-bold">-</span>
+                                <input type="text" id="group-score-${gIdx}-${mIdx}-p2" placeholder="0" value="${m.p2Score}" oninput="${targetWindow}updateGroupMatchScore(${gIdx}, ${mIdx}, 'p2Score', this.value)" class="w-7 text-center bg-slate-900 border border-slate-700 rounded text-emerald-400 font-mono font-bold text-xs py-0.5 outline-none">
+                                
+                                <button onclick="${targetWindow}loadGroupMatch(${gIdx}, ${mIdx})" class="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-0.5 rounded text-[10px] font-bold uppercase transition-colors flex items-center gap-0.5 shadow-sm ml-1" title="Load Match into Live Scoreboard">
+                                    <i data-lucide="play" class="w-2.5 h-2.5"></i> ${isLive ? 'Live' : 'Load'}
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                return `
+                    <div class="bg-slate-950 border border-slate-800/90 rounded-xl overflow-hidden shadow-xl flex flex-col">
+                        <div class="bg-slate-900 px-4 py-2.5 border-b border-slate-800 flex justify-between items-center gap-2">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <div class="w-3 h-3 rounded-full bg-emerald-500 shadow-sm flex-none"></div>
+                                <h3 class="font-extrabold text-white uppercase text-sm tracking-wider truncate">${g.name}</h3>
+                                <span class="bg-slate-800 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded-full font-mono flex-none">${g.players.length} Players</span>
+                            </div>
+                            <div class="flex items-center gap-1.5 flex-none">
+                                <button onclick="${targetWindow}addPlayerToGroup(${gIdx})" class="bg-slate-800 hover:bg-emerald-600 text-slate-200 hover:text-white px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors flex items-center gap-1 border border-slate-700" title="Add Player to ${g.name}">
+                                    <i data-lucide="user-plus" class="w-3 h-3"></i> Add Player
+                                </button>
+                                <button onclick="${targetWindow}removeGroup(${gIdx})" class="bg-slate-800 hover:bg-red-900/80 text-slate-400 hover:text-red-200 p-1 rounded-lg transition-colors border border-slate-700" title="Delete ${g.name}">
+                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="p-3 border-b border-slate-800/80 bg-slate-950/40">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-800">
+                                        <th class="py-1 px-2 text-center">#</th>
+                                        <th class="py-1 px-2">Player</th>
+                                        <th class="py-1 px-2 text-center">P</th>
+                                        <th class="py-1 px-2 text-center">W</th>
+                                        <th class="py-1 px-2 text-center">L</th>
+                                        <th class="py-1 px-2 text-center">Legs</th>
+                                        <th class="py-1 px-2 text-center">+/-</th>
+                                        <th class="py-1 px-2 text-center">PTS</th>
+                                        <th class="py-1 px-1 text-center w-6"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${tableRows}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="p-3 flex flex-col gap-1.5 bg-slate-900/30">
+                            <div class="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-0.5 flex items-center gap-1">
+                                <i data-lucide="calendar" class="w-3 h-3 text-emerald-400"></i> Group Fixtures (${g.matches.length})
+                            </div>
+                            ${matchRows}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="flex flex-col gap-4 pt-1">
+                    ${topControls}
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        ${groupCards}
+                    </div>
+                </div>
+            `;
+        }
+
+        function getBracketSettingsHTML() {
+            const allRounds = [
+                { key: 'group', title: 'Group Stage Matches', maxCount: 64 },
+                { key: 'r64', title: 'Round of 64', maxCount: 64 },
+                { key: 'r32', title: 'Round of 32', maxCount: 32 },
+                { key: 'r16', title: 'Round of 16', maxCount: 16 },
+                { key: 'quarter', title: 'Quarter Finals', maxCount: 8 },
+                { key: 'semi', title: 'Semi Finals', maxCount: 4 },
+                { key: 'final', title: 'Championship Final', maxCount: 2 }
+            ];
+
+            const activeRounds = allRounds.filter(r => r.maxCount <= tournamentSize);
+
+            const cards = activeRounds.map(r => {
+                const s = roundSettings[r.key] || { startingScore: 501, legs: 3, sets: 1 };
+                const s301 = s.startingScore === 301 ? 'selected' : '';
+                const s501 = s.startingScore === 501 ? 'selected' : '';
+                const s701 = s.startingScore === 701 ? 'selected' : '';
+
+                return `
+                    <div class="bg-slate-950 border border-slate-800 rounded-xl p-5 flex flex-col gap-4 shadow-lg">
+                        <div class="flex items-center gap-2 border-b border-slate-800 pb-3">
+                            <div class="w-2.5 h-2.5 rounded-full bg-emerald-500"></div>
+                            <h3 class="text-sm font-bold text-white uppercase tracking-wider">${r.title}</h3>
+                        </div>
+
+                        <div class="flex flex-col gap-3">
+                            <div>
+                                <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Starting Score</label>
+                                <select onchange="updateRoundSetting('${r.key}', 'startingScore', this.value)" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-bold outline-none focus:border-emerald-500">
+                                    <option value="301" ${s301}>301</option>
+                                    <option value="501" ${s501}>501</option>
+                                    <option value="701" ${s701}>701</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Legs per Set</label>
+                                    <input type="number" min="1" max="9" value="${s.legs}" onchange="updateRoundSetting('${r.key}', 'legs', this.value)" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-bold outline-none focus:border-emerald-500">
+                                </div>
+                                <div>
+                                    <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Sets to Win</label>
+                                    <input type="number" min="1" max="5" value="${s.sets}" onchange="updateRoundSetting('${r.key}', 'sets', this.value)" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-bold outline-none focus:border-emerald-500">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="flex flex-col gap-6">
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        Configure custom match rules (starting score, legs, and sets) for each stage of the tournament framework. When you click <span class="text-emerald-400 font-bold">Load</span> on any group or knockout match, these specific rules will be applied automatically.
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                        ${cards}
+                    </div>
+                </div>
+            `;
+        }
+
+        function init() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const paramRoom = urlParams.get('room');
+            const paramMode = urlParams.get('mode');
+
+            if (paramRoom) {
+                roomCode = paramRoom.toUpperCase();
+            }
+            if (paramMode === 'remote') {
+                isRemoteMode = true;
+            }
+
+            const modalRoomCode = document.getElementById('modal-room-code');
+            if (modalRoomCode) {
+                modalRoomCode.value = roomCode;
+            }
+
+            const btnSettingsClose = document.getElementById('btn-close-settings');
+            const btnCancelConfirm = document.getElementById('btn-confirm-cancel');
+            const btnYesConfirm = document.getElementById('btn-confirm-yes');
+            const btnAlertOk = document.getElementById('btn-alert-ok');
+
+            if (btnSettingsClose) btnSettingsClose.onclick = () => toggleSettings(false);
+            if (btnCancelConfirm) btnCancelConfirm.onclick = () => toggleConfirm(false);
+            if (btnYesConfirm) btnYesConfirm.onclick = executeReset;
+            if (btnAlertOk) btnAlertOk.onclick = () => toggleAlert(false);
+
+            setupKeyboard();
+            setChroma(config.chromaColor);
+            updateConfig('color-indicator', config.colors.indicator);
+
+            listenToRemoteRoom();
+            listenToLocalBroadcast();
+            render();
+        }
+
+        window.onload = function() {
+            init();
+        };
+    </script>
+</body>
+</html>
