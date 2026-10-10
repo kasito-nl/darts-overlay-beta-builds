@@ -452,7 +452,7 @@
 
         function generateGroups(totalPlayers = 8, playersPerGroup = 4) {
             const numGroups = Math.max(2, Math.floor(totalPlayers / playersPerGroup));
-            const groupNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
+            const groupNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'];
             const groupsArr = [];
 
             for (let g = 0; g < numGroups; g++) {
@@ -567,7 +567,7 @@
         }
 
         function addGroup() {
-            const groupNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
+            const groupNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'];
             const gIdx = groups.length;
             const letter = groupNames[gIdx] || (gIdx + 1);
             
@@ -776,40 +776,28 @@
                 };
             });
 
-            // Darts for Windows (WDF Standard) Seeding Map:
-            // Maps Group Winners to opposite Group Runners-Up ensuring Seeds anchor opposite ends of the bracket.
             let winnerOrder = [];
             let runnerOrder = [];
 
             if (numGroups === 2) {
-                // 2 Groups (4-player bracket)
                 winnerOrder = [0, 1];
                 runnerOrder = [1, 0];
             } else if (numGroups === 4) {
-                // 4 Groups (8-player bracket: DfW G1(W) vs G2(RU), G4(W) vs G3(RU), G3(W) vs G4(RU), G2(W) vs G1(RU))
                 winnerOrder = [0, 3, 2, 1];
                 runnerOrder = [1, 2, 3, 0];
             } else if (numGroups === 8) {
-                // 8 Groups (16-player bracket: DfW standard 8-group seeding pattern)
                 winnerOrder = [0, 7, 4, 3, 2, 5, 6, 1];
                 runnerOrder = [1, 6, 5, 2, 3, 4, 7, 0];
             } else if (numGroups === 16) {
-                // 16 Groups (32-player bracket: DfW standard 16-group seeding pattern)
                 winnerOrder = [0, 15, 8, 7, 4, 11, 12, 3, 2, 13, 10, 5, 6, 9, 14, 1];
                 runnerOrder = [1, 14, 9, 6, 5, 10, 13, 2, 3, 12, 11, 4, 7, 8, 15, 0];
-            } else if (numGroups === 32) {
-                // 32 Groups (64-player bracket: DfW standard 32-group seeding pattern)
-                winnerOrder = [0, 31, 16, 15, 8, 23, 24, 7, 3, 28, 19, 12, 11, 20, 27, 4, 2, 29, 18, 13, 10, 21, 26, 5, 1, 30, 17, 14, 9, 22, 25, 6];
-                runnerOrder = [1, 30, 17, 14, 9, 22, 25, 6, 2, 29, 18, 13, 10, 21, 26, 5, 3, 28, 19, 12, 11, 20, 27, 4, 0, 31, 16, 15, 8, 23, 24, 7];
             } else {
-                // Fallback crossover seeding for custom group counts
                 for (let i = 0; i < numGroups; i++) {
                     winnerOrder.push(i);
                     runnerOrder.push((i + 1) % numGroups);
                 }
             }
 
-            // Seed qualifying players into Round 1 matches
             winnerOrder.forEach((gIdxWinner, matchIdx) => {
                 if (r1Matches[matchIdx] && qualified[gIdxWinner]) {
                     r1Matches[matchIdx].p1 = qualified[gIdxWinner].winner;
@@ -1478,6 +1466,10 @@
                 gameState.p1Score = config.startingScore;
                 gameState.p2Score = config.startingScore;
 
+                // Reset thrown darts count when leg is won
+                gameState.p1DartsThrown = 0;
+                gameState.p2DartsThrown = 0;
+
                 const setWonByP1 = isP1 && gameState.p1Legs >= config.legsPerSet;
                 const setWonByP2 = !isP1 && gameState.p2Legs >= config.legsPerSet;
 
@@ -1586,9 +1578,6 @@
         }
 
         function updateRoundSetting(roundKey, field, value) {
-            if (!roundSettings[roundKey]) {
-                roundSettings[roundKey] = { startingScore: 501, legs: 3, sets: 1 };
-            }
             roundSettings[roundKey][field] = parseInt(value);
             syncToRemote();
         }
@@ -2122,7 +2111,6 @@
 
             const activePlayerName = gameState.currentPlayer === 1 ? gameState.p1Name : gameState.p2Name;
             const activeScore = gameState.currentPlayer === 1 ? gameState.p1Score : gameState.p2Score;
-            const activeDarts = gameState.currentPlayer === 1 ? gameState.p1DartsThrown : gameState.p2DartsThrown;
             
             const activeCheck = config.showRemoteCheckouts ? getCheckout(activeScore) : null;
             
@@ -2131,8 +2119,6 @@
 
             const padPadding = isFitMode ? 'p-2 sm:p-4' : 'p-4';
             const gapSize = isFitMode ? 'gap-2 sm:gap-3' : 'gap-3.5';
-            const turnPy = isFitMode ? 'py-2 sm:py-3' : 'py-3.5';
-            const scoreTextSize = isFitMode ? 'text-4xl sm:text-5xl' : 'text-5xl';
             const numPy = isFitMode ? 'py-2 sm:py-3' : 'py-3';
             const numTextSize = isFitMode ? 'text-xl sm:text-2xl' : 'text-2xl';
 
@@ -2313,6 +2299,8 @@
                 `<option value="${opt.val}" class="bg-slate-900 text-white" ${remoteScale === opt.val ? 'selected' : ''}>${opt.label}</option>`
             ).join('');
 
+            const showSets = config.setsToWin > 1;
+
             const html = `
                 <div class="w-full flex flex-col items-center justify-center ${isFitMode ? 'max-h-[100dvh] overflow-hidden' : 'pb-12'}">
                     
@@ -2356,32 +2344,54 @@
                             <i data-lucide="list-video" class="w-4 h-4"></i> Load Match (Queue / Groups / Tree)
                         </button>
 
+                        <!-- DartConnect Style Player Display Cards -->
                         <div class="grid grid-cols-2 gap-2">
-                            <button onclick="setPlayer(1)" class="py-2 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-between gap-2 ${gameState.currentPlayer === 1 ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-950/50' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}">
-                                <div class="flex items-center gap-1.5 min-w-0">
-                                    <span class="w-2 h-2 rounded-full flex-none ${gameState.currentPlayer === 1 ? 'bg-white animate-pulse' : 'bg-slate-600'}"></span>
-                                    <span class="truncate">P1: ${gameState.p1Name} (${gameState.p1DartsThrown} 🎯)</span>
+                            <!-- Player 1 Card -->
+                            <div onclick="setPlayer(1)" class="cursor-pointer rounded-xl border transition-all p-2.5 flex flex-col justify-between ${gameState.currentPlayer === 1 ? 'bg-slate-950 border-emerald-500 ring-2 ring-emerald-500/40 shadow-lg shadow-emerald-950/50' : 'bg-slate-950/80 border-slate-800 hover:bg-slate-800/80'}">
+                                <div class="flex items-center justify-between gap-1 mb-1 border-b border-slate-800 pb-1.5">
+                                    <div class="flex items-center gap-1.5 min-w-0">
+                                        <span class="w-2.5 h-2.5 rounded-full flex-none ${gameState.currentPlayer === 1 ? 'bg-emerald-400 animate-pulse' : 'bg-slate-700'}"></span>
+                                        <span class="font-extrabold text-xs text-white uppercase truncate">${gameState.p1Name}</span>
+                                    </div>
+                                    <span class="text-[10px] font-mono font-bold text-slate-400 flex-none">${gameState.p1DartsThrown} 🎯</span>
                                 </div>
-                                <span class="font-mono text-base sm:text-lg font-black bg-black/40 px-2 py-0.5 rounded text-yellow-300 border border-white/10 flex-none ml-1">${gameState.p1Score}</span>
-                            </button>
-                            <button onclick="setPlayer(2)" class="py-2 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-between gap-2 ${gameState.currentPlayer === 2 ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-950/50' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}">
-                                <div class="flex items-center gap-1.5 min-w-0">
-                                    <span class="w-2 h-2 rounded-full flex-none ${gameState.currentPlayer === 2 ? 'bg-white animate-pulse' : 'bg-slate-600'}"></span>
-                                    <span class="truncate">P2: ${gameState.p2Name} (${gameState.p2DartsThrown} 🎯)</span>
+
+                                <!-- DartConnect Rest Score Block -->
+                                <div class="bg-slate-900 border border-slate-800 rounded-lg p-2 text-center my-1">
+                                    <div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Rest</div>
+                                    <div class="text-3xl sm:text-4xl font-black font-mono tracking-tight ${gameState.currentPlayer === 1 ? 'text-emerald-400' : 'text-white'}">${gameState.p1Score}</div>
                                 </div>
-                                <span class="font-mono text-base sm:text-lg font-black bg-black/40 px-2 py-0.5 rounded text-yellow-300 border border-white/10 flex-none ml-1">${gameState.p2Score}</span>
-                            </button>
+
+                                <div class="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1 border-t border-slate-800">
+                                    ${showSets ? `<span>Sets: <strong class="text-white font-bold">${gameState.p1Sets}</strong></span>` : ''}
+                                    <span>Legs: <strong class="text-white font-bold">${gameState.p1Legs}</strong></span>
+                                </div>
+                            </div>
+
+                            <!-- Player 2 Card -->
+                            <div onclick="setPlayer(2)" class="cursor-pointer rounded-xl border transition-all p-2.5 flex flex-col justify-between ${gameState.currentPlayer === 2 ? 'bg-slate-950 border-emerald-500 ring-2 ring-emerald-500/40 shadow-lg shadow-emerald-950/50' : 'bg-slate-950/80 border-slate-800 hover:bg-slate-800/80'}">
+                                <div class="flex items-center justify-between gap-1 mb-1 border-b border-slate-800 pb-1.5">
+                                    <div class="flex items-center gap-1.5 min-w-0">
+                                        <span class="w-2.5 h-2.5 rounded-full flex-none ${gameState.currentPlayer === 2 ? 'bg-emerald-400 animate-pulse' : 'bg-slate-700'}"></span>
+                                        <span class="font-extrabold text-xs text-white uppercase truncate">${gameState.p2Name}</span>
+                                    </div>
+                                    <span class="text-[10px] font-mono font-bold text-slate-400 flex-none">${gameState.p2DartsThrown} 🎯</span>
+                                </div>
+
+                                <!-- DartConnect Rest Score Block -->
+                                <div class="bg-slate-900 border border-slate-800 rounded-lg p-2 text-center my-1">
+                                    <div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Rest</div>
+                                    <div class="text-3xl sm:text-4xl font-black font-mono tracking-tight ${gameState.currentPlayer === 2 ? 'text-emerald-400' : 'text-white'}">${gameState.p2Score}</div>
+                                </div>
+
+                                <div class="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1 border-t border-slate-800">
+                                    ${showSets ? `<span>Sets: <strong class="text-white font-bold">${gameState.p2Sets}</strong></span>` : ''}
+                                    <span>Legs: <strong class="text-white font-bold">${gameState.p2Legs}</strong></span>
+                                </div>
+                            </div>
                         </div>
 
-                        <div class="bg-slate-950 border border-slate-800 rounded-xl ${turnPy} px-4 text-center relative overflow-hidden shadow-inner">
-                            <div class="flex items-center justify-between text-[10px] sm:text-xs text-slate-400 uppercase font-bold tracking-widest mb-0.5">
-                                <span>Current Turn</span>
-                                <span class="text-emerald-400 font-mono font-bold flex items-center gap-1"><i data-lucide="target" class="w-3.5 h-3.5"></i> ${activeDarts} Darts Thrown</span>
-                            </div>
-                            <div class="text-xl sm:text-2xl font-black text-white truncate px-2 mb-0.5">${activePlayerName}</div>
-                            <div class="${scoreTextSize} font-extrabold text-emerald-400 font-mono tracking-tight">${activeScore}</div>
-                            ${activeCheck ? `<div class="mt-1 text-xs font-mono font-bold text-yellow-400 bg-yellow-950/40 border border-yellow-500/30 rounded-lg py-0.5 px-2">Checkout: ${activeCheck}</div>` : ''}
-                        </div>
+                        ${activeCheck ? `<div class="text-xs font-mono font-bold text-yellow-400 bg-yellow-950/40 border border-yellow-500/30 rounded-xl py-1 px-3 text-center">Checkout: ${activeCheck}</div>` : ''}
 
                         <div class="bg-slate-950 border border-slate-800 rounded-xl p-2.5 sm:p-3 flex items-center justify-between">
                             <span class="text-xs text-slate-400 uppercase font-bold">Entered:</span>
